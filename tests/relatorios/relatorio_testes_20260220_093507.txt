@@ -1,0 +1,270 @@
+======================================================================
+RELATÓRIO DE TESTES - EXTRAÇÃO DE PROCESSOS
+======================================================================
+Data: 20/02/2026 09:35:07
+Total de processos testados: 10
+
+
+----------------------------------------------------------------------
+Arquivo: Processo-64136_000430_2026-16.pdf
+----------------------------------------------------------------------
+[OK] Processado com sucesso
+
+Identificação:
+  - NUP: 64136.000430/2026-16
+  - UASG: 160142
+  - Req: 9
+
+Itens: 2
+  - Item 1: GÁS LIQUEFEITO...
+    Qtd: 1.0, ND/SI: None
+  - Item 2: GÁS LIQUEFEITO DE PETROLEO- GLP, USO INDUSTRIAL...
+    Qtd: 3617.0, ND/SI: 30/04
+
+Nota de Credito: [OK]
+  - Numero de NCs: 5
+
+Certidoes:
+  - SICAF: [OK]
+  - CADIN: [OK]
+  - Consolidada: [OK]
+
+Contrato: [FALTA]
+
+[OK] Todos os resultados estao conforme o esperado!
+
+----------------------------------------------------------------------
+Arquivo: Processo-65297_000318_2026-03.pdf
+----------------------------------------------------------------------
+[OK] Processado com sucesso
+
+Identificação:
+  - NUP: 65297.000318/2026-03
+  - UASG: 160136
+  - Req: 01
+
+Itens: 2
+  - Item 1: Contratação de Passagem Aérea Junto a Companhia Cr...
+    Qtd: 3899.98, ND/SI: 33.01
+  - Item 2: Prestaçao de Serviços de Agenciamento de Viagens...
+    Qtd: 2.0, ND/SI: 33.01
+
+Nota de Credito: [OK]
+  - Numero de NCs: 1
+
+Certidoes:
+  - SICAF: [OK]
+  - CADIN: [OK]
+  - Consolidada: [OK]
+
+Contrato: [FALTA]
+
+----------------------------------------------------------------------
+Arquivo: Processo-65297_000466_2026-10.pdf
+----------------------------------------------------------------------
+[OK] Processado com sucesso
+
+Identificação:
+  - NUP: 65297.000466/2026-10
+  - UASG: 160141
+  - Req: 02
+
+Itens: 0
+
+Nota de Credito: [OK]
+  - Numero de NCs: 1
+
+Certidoes:
+  - SICAF: [OK]
+  - CADIN: [OK]
+  - Consolidada: [OK]
+
+Contrato: [FALTA]
+
+----------------------------------------------------------------------
+Arquivo: Processo-65297_001232_2026-90.pdf
+----------------------------------------------------------------------
+[OK] Processado com sucesso
+
+Identificação:
+  - NUP: 65297.001232/2026-90
+  - UASG: 160136
+  - Req: 19
+
+Itens: 1
+  - Item 4: Manutenção preventiva, corretiva, instalação e rem...
+    Qtd: 6666.0, ND/SI: 39.17
+
+Nota de Credito: [OK]
+  - Numero de NCs: 1
+
+Certidoes:
+  - SICAF: [OK]
+  - CADIN: [OK]
+  - Consolidada: [OK]
+
+Contrato: [OK]
+
+[OK] Todos os resultados estao conforme o esperado!
+
+----------------------------------------------------------------------
+Arquivo: Processo-65297_001529_2026-55.pdf
+----------------------------------------------------------------------
+[OK] Processado com sucesso
+
+Identificação:
+  - NUP: 65297.001529/2026-55
+  - UASG: 160512
+  - Req: 21
+
+Itens: 4
+  - Item 1: ASSENTO VASO SANITÁRIO...
+    Qtd: 10.0, ND/SI: 30.24
+  - Item 4: REPARO VÁLVULA HIDRAULICA...
+    Qtd: 5.0, ND/SI: 30.24
+  - Item 45: GRELHA DE METAL PARA RALO...
+    Qtd: 5.0, ND/SI: 30.24
+  - Item 57: TORNEIRA DE ME- TAL...
+    Qtd: 7.0, ND/SI: 30.24
+
+Nota de Credito: [OK]
+  - Numero de NCs: 1
+
+Certidoes:
+  - SICAF: [OK]
+  - CADIN: [OK]
+  - Consolidada: [OK]
+
+Contrato: [FALTA]
+
+----------------------------------------------------------------------
+Arquivo: Processo-65345_000195_2026-80.pdf
+----------------------------------------------------------------------
+[OK] Processado com sucesso
+
+Identificação:
+  - NUP: 65345.000195/2026-80
+  - UASG: None
+  - Req: 01
+
+Itens: 4
+  - Item 3: Manutenção preventiva de...
+    Qtd: 5.0, ND/SI: 33.90.39/17
+  - Item 12: Instalação / Manutenção - Câmara Fria - Serviço de...
+    Qtd: 2.0, ND/SI: 33.90.39/17
+  - Item 13: Instalação / Manutenção - Câmara Fria - Serviço Pr...
+    Qtd: 10.0, ND/SI: 33.90.39/17
+  - Item 30: Instalação / Manutenção - Câmara Fria - Serviço de...
+    Qtd: 1.0, ND/SI: 33.90.39/17
+
+Nota de Credito: [OK]
+  - Numero de NCs: 1
+
+Certidoes:
+  - SICAF: [OK]
+  - CADIN: [OK]
+  - Consolidada: [OK]
+
+Contrato: [OK]
+
+----------------------------------------------------------------------
+Arquivo: Processo-65345_000389_2026-85.pdf
+----------------------------------------------------------------------
+[OK] Processado com sucesso
+
+Identificação:
+  - NUP: 65345.000389/2026-85
+  - UASG: 160141
+  - Req: 03
+
+Itens: 1
+  - Item 81: CALHA EM CHAPA DE AÇO GALVANIZADO NÚMERO 24, DESEN...
+    Qtd: 20.0, ND/SI: 33.90.39/24
+
+Nota de Credito: [OK]
+  - Numero de NCs: 1
+
+Certidoes:
+  - SICAF: [OK]
+  - CADIN: [OK]
+  - Consolidada: [OK]
+
+Contrato: [FALTA]
+
+[OK] Todos os resultados estao conforme o esperado!
+
+----------------------------------------------------------------------
+Arquivo: Processo-65345_000547_2026-05.pdf
+----------------------------------------------------------------------
+[OK] Processado com sucesso
+
+Identificação:
+  - NUP: 65345.000547/2026-05
+  - UASG: 160136
+  - Req: None
+
+Itens: 0
+
+Nota de Credito: [OK]
+  - Numero de NCs: 1
+
+Certidoes:
+  - SICAF: [OK]
+  - CADIN: [OK]
+  - Consolidada: [OK]
+
+Contrato: [FALTA]
+
+----------------------------------------------------------------------
+Arquivo: Processo-65345_000556_2026-98.pdf
+----------------------------------------------------------------------
+[OK] Processado com sucesso
+
+Identificação:
+  - NUP: 65345.000556/2026-98
+  - UASG: 160136
+  - Req: None
+
+Itens: 0
+
+Nota de Credito: [OK]
+  - Numero de NCs: 1
+
+Certidoes:
+  - SICAF: [OK]
+  - CADIN: [OK]
+  - Consolidada: [OK]
+
+Contrato: [FALTA]
+
+----------------------------------------------------------------------
+Arquivo: Processo-65493_000226_2026-07.pdf
+----------------------------------------------------------------------
+[OK] Processado com sucesso
+
+Identificação:
+  - NUP: 65493.000226/2026-07
+  - UASG: 160255
+  - Req: None
+
+Itens: 1
+  - Item 24: Modelo Anatômico Para Fins Didáticos Tipo: Ferimen...
+    Qtd: 1.0, ND/SI: 4490.52.08
+
+Nota de Credito: [OK]
+  - Numero de NCs: 1
+
+Certidoes:
+  - SICAF: [OK]
+  - CADIN: [OK]
+  - Consolidada: [OK]
+
+Contrato: [FALTA]
+
+======================================================================
+RESUMO FINAL
+======================================================================
+Total de processos: 10
+Processos com problemas: 0
+Total de problemas: 0
+Taxa de sucesso: 100.0%

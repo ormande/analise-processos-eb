@@ -1,0 +1,281 @@
+[
+  {
+    "arquivo": "Processo-64136_000430_2026-16.pdf",
+    "sucesso": true,
+    "timestamp": "2026-02-20T08:13:11.400057",
+    "identificacao": {
+      "nup": "64136.000430/2026-16",
+      "uasg": "160142",
+      "nr_requisicao": "9"
+    },
+    "itens": {
+      "total": 1,
+      "detalhes": [
+        {
+          "item": 1,
+          "descricao": "GÁS LIQUEFEITO DE PETROLEO- GLP, USO INDUSTRIAL...",
+          "qtd": 3617.0,
+          "nd_si": "30/04"
+        }
+      ]
+    },
+    "nota_credito": {
+      "tem_nc": true,
+      "num_ncs": 5
+    },
+    "certidoes": {
+      "tem_sicaf": true,
+      "tem_cadin": true,
+      "tem_consolidada": true
+    },
+    "contrato": {
+      "tem_contrato": false
+    }
+  },
+  {
+    "arquivo": "Processo-65297_000318_2026-03.pdf",
+    "sucesso": true,
+    "timestamp": "2026-02-20T08:13:14.691306",
+    "identificacao": {
+      "nup": "65297.000318/2026-03",
+      "uasg": "160136",
+      "nr_requisicao": "01"
+    },
+    "itens": {
+      "total": 2,
+      "detalhes": [
+        {
+          "item": 1,
+          "descricao": "Contratação de Passagem Aérea Junto a Companhia Cr...",
+          "qtd": 3899.98,
+          "nd_si": "33.01"
+        },
+        {
+          "item": 2,
+          "descricao": "Prestaçao de Serviços de Agenciamento de Viagens...",
+          "qtd": 2.0,
+          "nd_si": "33.01"
+        }
+      ]
+    },
+    "nota_credito": {
+      "tem_nc": true,
+      "num_ncs": 1
+    },
+    "certidoes": {
+      "tem_sicaf": true,
+      "tem_cadin": true,
+      "tem_consolidada": true
+    },
+    "contrato": {
+      "tem_contrato": false
+    }
+  },
+  {
+    "arquivo": "Processo-65297_000466_2026-10.pdf",
+    "sucesso": true,
+    "timestamp": "2026-02-20T08:13:17.381383",
+    "identificacao": {
+      "nup": "65297.000466/2026-10",
+      "uasg": "160141",
+      "nr_requisicao": "02"
+    },
+    "itens": {
+      "total": 0,
+      "detalhes": []
+    },
+    "nota_credito": {
+      "tem_nc": true,
+      "num_ncs": 1
+    },
+    "certidoes": {
+      "tem_sicaf": true,
+      "tem_cadin": true,
+      "tem_consolidada": true
+    },
+    "contrato": {
+      "tem_contrato": false
+    }
+  },
+  {
+    "arquivo": "Processo-65297_001232_2026-90.pdf",
+    "sucesso": false,
+    "erro": "can't compare offset-naive and offset-aware datetimes",
+    "timestamp": "2026-02-20T08:13:48.233401"
+  },
+  {
+    "arquivo": "Processo-65297_001529_2026-55.pdf",
+    "sucesso": true,
+    "timestamp": "2026-02-20T08:13:50.658876",
+    "identificacao": {
+      "nup": "65297.001529/2026-55",
+      "uasg": "160512",
+      "nr_requisicao": "21"
+    },
+    "itens": {
+      "total": 4,
+      "detalhes": [
+        {
+          "item": 1,
+          "descricao": "ASSENTO VASO SANITÁRIO...",
+          "qtd": 10.0,
+          "nd_si": "30.24"
+        },
+        {
+          "item": 4,
+          "descricao": "REPARO VÁLVULA HIDRAULICA...",
+          "qtd": 5.0,
+          "nd_si": "30.24"
+        },
+        {
+          "item": 45,
+          "descricao": "GRELHA DE METAL PARA RALO...",
+          "qtd": 5.0,
+          "nd_si": "30.24"
+        },
+        {
+          "item": 57,
+          "descricao": "TORNEIRA DE ME- TAL...",
+          "qtd": 7.0,
+          "nd_si": "30.24"
+        }
+      ]
+    },
+    "nota_credito": {
+      "tem_nc": true,
+      "num_ncs": 1
+    },
+    "certidoes": {
+      "tem_sicaf": true,
+      "tem_cadin": true,
+      "tem_consolidada": true
+    },
+    "contrato": {
+      "tem_contrato": false
+    }
+  },
+  {
+    "arquivo": "Processo-65345_000195_2026-80.pdf",
+    "sucesso": false,
+    "erro": "can't compare offset-naive and offset-aware datetimes",
+    "timestamp": "2026-02-20T08:14:03.256639"
+  },
+  {
+    "arquivo": "Processo-65345_000389_2026-85.pdf",
+    "sucesso": true,
+    "timestamp": "2026-02-20T08:14:05.776692",
+    "identificacao": {
+      "nup": "65345.000389/2026-85",
+      "uasg": "160141",
+      "nr_requisicao": "03"
+    },
+    "itens": {
+      "total": 1,
+      "detalhes": [
+        {
+          "item": 81,
+          "descricao": "CALHA EM CHAPA DE AÇO GALVANIZADO NÚMERO 24, DESEN...",
+          "qtd": 20.0,
+          "nd_si": "33.90.39/24"
+        }
+      ]
+    },
+    "nota_credito": {
+      "tem_nc": true,
+      "num_ncs": 1
+    },
+    "certidoes": {
+      "tem_sicaf": true,
+      "tem_cadin": true,
+      "tem_consolidada": true
+    },
+    "contrato": {
+      "tem_contrato": false
+    }
+  },
+  {
+    "arquivo": "Processo-65345_000547_2026-05.pdf",
+    "sucesso": true,
+    "timestamp": "2026-02-20T08:14:09.268079",
+    "identificacao": {
+      "nup": "65345.000547/2026-05",
+      "uasg": "160136",
+      "nr_requisicao": null
+    },
+    "itens": {
+      "total": 0,
+      "detalhes": []
+    },
+    "nota_credito": {
+      "tem_nc": true,
+      "num_ncs": 1
+    },
+    "certidoes": {
+      "tem_sicaf": true,
+      "tem_cadin": true,
+      "tem_consolidada": true
+    },
+    "contrato": {
+      "tem_contrato": false
+    }
+  },
+  {
+    "arquivo": "Processo-65345_000556_2026-98.pdf",
+    "sucesso": true,
+    "timestamp": "2026-02-20T08:14:12.422847",
+    "identificacao": {
+      "nup": "65345.000556/2026-98",
+      "uasg": "160136",
+      "nr_requisicao": null
+    },
+    "itens": {
+      "total": 0,
+      "detalhes": []
+    },
+    "nota_credito": {
+      "tem_nc": true,
+      "num_ncs": 1
+    },
+    "certidoes": {
+      "tem_sicaf": true,
+      "tem_cadin": true,
+      "tem_consolidada": true
+    },
+    "contrato": {
+      "tem_contrato": false
+    }
+  },
+  {
+    "arquivo": "Processo-65493_000226_2026-07.pdf",
+    "sucesso": true,
+    "timestamp": "2026-02-20T08:14:15.190893",
+    "identificacao": {
+      "nup": "65493.000226/2026-07",
+      "uasg": "160255",
+      "nr_requisicao": null
+    },
+    "itens": {
+      "total": 1,
+      "detalhes": [
+        {
+          "item": 24,
+          "descricao": "Modelo Anatômico Para Fins Didáticos Tipo: Ferimen...",
+          "qtd": 1.0,
+          "nd_si": "4490.52.08"
+        }
+      ]
+    },
+    "nota_credito": {
+      "tem_nc": true,
+      "num_ncs": 1
+    },
+    "certidoes": {
+      "tem_sicaf": true,
+      "tem_cadin": true,
+      "tem_consolidada": true
+    },
+    "contrato": {
+      "tem_contrato": false
+    }
+  }
+]

@@ -1,0 +1,62 @@
+[
+  {
+    "arquivo": "Processo-64136_000430_2026-16.pdf",
+    "sucesso": false,
+    "erro": "module 'modules.extractor' has no attribute 'extrair_dados_pdf'",
+    "timestamp": "2026-02-20T07:51:32.016893"
+  },
+  {
+    "arquivo": "Processo-65297_000318_2026-03.pdf",
+    "sucesso": false,
+    "erro": "module 'modules.extractor' has no attribute 'extrair_dados_pdf'",
+    "timestamp": "2026-02-20T07:51:32.017192"
+  },
+  {
+    "arquivo": "Processo-65297_000466_2026-10.pdf",
+    "sucesso": false,
+    "erro": "module 'modules.extractor' has no attribute 'extrair_dados_pdf'",
+    "timestamp": "2026-02-20T07:51:32.017437"
+  },
+  {
+    "arquivo": "Processo-65297_001232_2026-90.pdf",
+    "sucesso": false,
+    "erro": "module 'modules.extractor' has no attribute 'extrair_dados_pdf'",
+    "timestamp": "2026-02-20T07:51:32.017674"
+  },
+  {
+    "arquivo": "Processo-65297_001529_2026-55.pdf",
+    "sucesso": false,
+    "erro": "module 'modules.extractor' has no attribute 'extrair_dados_pdf'",
+    "timestamp": "2026-02-20T07:51:32.017923"
+  },
+  {
+    "arquivo": "Processo-65345_000195_2026-80.pdf",
+    "sucesso": false,
+    "erro": "module 'modules.extractor' has no attribute 'extrair_dados_pdf'",
+    "timestamp": "2026-02-20T07:51:32.018156"
+  },
+  {
+    "arquivo": "Processo-65345_000389_2026-85.pdf",
+    "sucesso": false,
+    "erro": "module 'modules.extractor' has no attribute 'extrair_dados_pdf'",
+    "timestamp": "2026-02-20T07:51:32.018392"
+  },
+  {
+    "arquivo": "Processo-65345_000547_2026-05.pdf",
+    "sucesso": false,
+    "erro": "module 'modules.extractor' has no attribute 'extrair_dados_pdf'",
+    "timestamp": "2026-02-20T07:51:32.018647"
+  },
+  {
+    "arquivo": "Processo-65345_000556_2026-98.pdf",
+    "sucesso": false,
+    "erro": "module 'modules.extractor' has no attribute 'extrair_dados_pdf'",
+    "timestamp": "2026-02-20T07:51:32.018936"
+  },
+  {
+    "arquivo": "Processo-65493_000226_2026-07.pdf",
+    "sucesso": false,
+    "erro": "module 'modules.extractor' has no attribute 'extrair_dados_pdf'",
+    "timestamp": "2026-02-20T07:51:32.019154"
+  }
+]

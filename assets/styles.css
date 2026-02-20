@@ -1,33 +1,24 @@
 /* ══════════════════════════════════════════════════════════════
    Análise de Processos — SAL/CAF — Cmdo 9º Gpt Log
-   Tema: militar escuro, profissional, minimalista
+   v2.0 — Interface profissional militar
    ══════════════════════════════════════════════════════════════ */
 
-/* ── Variáveis de cor (tema escuro) ── */
 :root {
     --verde: #34d399;
-    --verde-bg: #064e3b;
+    --verde-bg: rgba(6, 78, 59, 0.5);
     --verde-borda: #065f46;
-    --verde-texto: #a7f3d0;
     --amarelo: #fbbf24;
-    --amarelo-bg: #78350f;
+    --amarelo-bg: rgba(120, 53, 15, 0.5);
     --amarelo-borda: #92400e;
-    --amarelo-texto: #fde68a;
     --vermelho: #f87171;
-    --vermelho-bg: #7f1d1d;
+    --vermelho-bg: rgba(127, 29, 29, 0.5);
     --vermelho-borda: #991b1b;
-    --vermelho-texto: #fecaca;
     --azul: #60a5fa;
-    --azul-bg: #1e3a5f;
+    --azul-bg: rgba(30, 58, 95, 0.6);
     --cinza: #94a3b8;
     --cinza-bg: #1e293b;
     --cinza-borda: #334155;
-    --texto-primario: #e2e8f0;
-    --texto-secundario: #94a3b8;
-    --texto-label: #cbd5e1;
-    --fundo-card: #1e293b;
-    --fundo-tabela-header: #334155;
-    --borda-tabela: #475569;
+    --accent: #3b82f6;
 }
 
 /* ── Layout geral ── */
@@ -37,7 +28,8 @@
 
 /* ── Sidebar ── */
 [data-testid="stSidebar"] {
-    background-color: #1e293b !important;
+    background-color: #0f172a !important;
+    border-right: 1px solid #1e293b !important;
 }
 
 [data-testid="stSidebar"] * {
@@ -49,334 +41,451 @@
     color: #cbd5e1 !important;
 }
 
-/* ── File uploader: traduzir texto e centralizar ── */
+/* ── File uploader ── */
 [data-testid="stSidebar"] [data-testid="stFileUploader"] section {
     text-align: center;
 }
-
 [data-testid="stSidebar"] [data-testid="stFileUploader"] section > div {
     display: flex;
     flex-direction: column;
     align-items: center;
 }
-
 [data-testid="stSidebar"] [data-testid="stFileUploader"] section small {
     font-size: 0 !important;
 }
-
 [data-testid="stSidebar"] [data-testid="stFileUploader"] section small::after {
     content: "Limite: 200MB • PDF";
     font-size: 0.8rem;
-    color: #94a3b8 !important;
+    color: #64748b !important;
 }
-
 [data-testid="stSidebar"] [data-testid="stFileUploader"] section > button {
     margin: 0 auto;
 }
 
-/* ── Expanders (estágios) ── */
-[data-testid="stExpander"] {
-    border: 1px solid var(--cinza-borda);
-    border-radius: 8px;
-    margin-bottom: 8px;
-    background-color: var(--cinza-bg);
+/* ── Tabs ── */
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 0;
+    border-bottom: 2px solid #1e293b;
+}
+[data-testid="stTabs"] [data-baseweb="tab"] {
+    padding: 10px 24px;
+    font-weight: 500;
+    font-size: 0.9rem;
+    color: #94a3b8 !important;
+    border-bottom: 2px solid transparent;
+}
+[data-testid="stTabs"] [data-baseweb="tab"][aria-selected="true"] {
+    color: #e2e8f0 !important;
+    border-bottom: 2px solid var(--accent) !important;
 }
 
+/* ── Expanders (estágios) ── */
+[data-testid="stExpander"] {
+    border: 1px solid #253347;
+    border-radius: 10px;
+    margin-bottom: 16px;
+    background-color: rgba(15, 23, 42, 0.6);
+    overflow: hidden;
+}
 [data-testid="stExpander"] summary {
     font-weight: 600;
     font-size: 1rem;
+    padding: 4px 0;
 }
 
-/* ── Tabelas nativas do Streamlit — centralizar conteúdo ── */
+/* ── Tabelas Streamlit ── */
 [data-testid="stDataFrame"] {
-    border-radius: 6px;
+    border-radius: 8px;
     overflow: hidden;
+    border: 1px solid #253347;
 }
-
 [data-testid="stDataFrame"] table th {
     text-align: center !important;
 }
-
 [data-testid="stDataFrame"] table td {
     text-align: center !important;
 }
 
 /* ── Bloco de código (máscara) ── */
 [data-testid="stCode"] {
-    border-radius: 6px;
-    border: 1px solid var(--cinza-borda);
+    border-radius: 8px;
+    border: 1px solid #253347;
 }
 
-/* ── Text area (despacho) — caixa visível e editável ── */
+/* ── Text area (despacho) ── */
 [data-testid="stTextArea"] textarea {
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
     font-size: 0.9rem;
     line-height: 1.6;
-    border-radius: 6px;
-    background-color: #1e293b !important;
+    border-radius: 8px;
+    background-color: #0f172a !important;
     color: #e2e8f0 !important;
-    border: 2px solid #475569 !important;
+    border: 1px solid #253347 !important;
     padding: 12px !important;
 }
-
 [data-testid="stTextArea"] textarea:focus {
-    border-color: #3b82f6 !important;
-    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.3) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
 }
 
 /* ── Botões ── */
 .stButton > button {
-    border-radius: 6px;
+    border-radius: 8px;
     font-weight: 500;
     font-size: 0.85rem;
     padding: 0.4rem 1rem;
 }
 
-/* ── Toast de notificação ── */
+/* ── Toast ── */
 [data-testid="stToast"] {
     border-radius: 8px;
 }
 
-/* ── Espaçamento entre seções ── */
+/* ── HR ── */
 hr {
-    margin: 0.5rem 0;
-    border-color: var(--cinza-borda);
+    margin: 0.8rem 0;
+    border-color: #1e293b;
 }
 
-/* ── Classes utilitárias para componentes HTML ── */
 
-/* Cards */
-.card-nc {
-    border: 1px solid #475569;
-    border-radius: 8px;
-    padding: 20px;
-    background: #1e293b;
-    margin-bottom: 16px;
-}
+/* ══════════════════════════════════════════════════════════════
+   COMPONENTES CUSTOMIZADOS
+   ══════════════════════════════════════════════════════════════ */
 
-.card-nc .card-titulo {
-    font-weight: 700;
-    font-size: 1.05rem;
-    margin-bottom: 12px;
-    color: #e2e8f0;
-}
-
-.card-nc .card-linha {
-    display: flex;
-    padding: 6px 0;
-    border-bottom: 1px solid #334155;
-}
-
-.card-nc .card-label {
-    width: 160px;
-    font-weight: 600;
-    color: #94a3b8;
-    flex-shrink: 0;
-}
-
-.card-nc .card-valor {
-    color: #e2e8f0;
-    font-family: 'Courier New', monospace;
-}
-
-/* Simulação ComprasNet */
-.simulacao-grid {
+/* ── Identificação (Estágio 1) — CORRIGIDO: texto visível ── */
+.ident-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 12px;
-    margin-top: 8px;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 40px;
 }
 
-.simulacao-campo {
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 6px;
-    padding: 10px 14px;
+.ident-campo {
+    padding: 10px 0;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.4);
 }
 
-.simulacao-campo .sim-label {
-    font-size: 0.75rem;
+.ident-label {
+    font-size: 0.72rem;
     font-weight: 600;
-    color: #94a3b8;
+    color: #64748b;
     text-transform: uppercase;
-    letter-spacing: 0.5px;
+    letter-spacing: 0.8px;
     margin-bottom: 4px;
 }
 
+.ident-valor {
+    font-size: 0.95rem;
+    color: #f1f5f9;
+    font-family: 'SF Mono', 'Cascadia Code', 'Courier New', monospace;
+    word-break: break-word;
+    line-height: 1.4;
+}
+
+/* ── Card NC ── */
+.card-nc {
+    border: 1px solid #253347;
+    border-radius: 10px;
+    padding: 20px 24px;
+    background: rgba(15, 23, 42, 0.6);
+    margin-bottom: 16px;
+}
+.card-nc .card-titulo {
+    font-weight: 700;
+    font-size: 1.05rem;
+    margin-bottom: 14px;
+    color: #e2e8f0;
+    padding-bottom: 10px;
+    border-bottom: 1px solid #253347;
+}
+.card-nc .card-linha {
+    display: flex;
+    padding: 7px 0;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+}
+.card-nc .card-linha:last-child {
+    border-bottom: none;
+}
+.card-nc .card-label {
+    width: 160px;
+    font-weight: 600;
+    color: #64748b;
+    font-size: 0.85rem;
+    flex-shrink: 0;
+}
+.card-nc .card-valor {
+    color: #f1f5f9;
+    font-family: 'SF Mono', 'Cascadia Code', 'Courier New', monospace;
+    font-size: 0.9rem;
+}
+
+/* ── Simulação ComprasNet ── */
+.simulacao-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+    margin-top: 12px;
+}
+.simulacao-campo {
+    background: rgba(15, 23, 42, 0.6);
+    border: 1px solid #253347;
+    border-radius: 8px;
+    padding: 12px 16px;
+    transition: border-color 0.2s;
+}
+.simulacao-campo:hover {
+    border-color: var(--accent);
+}
+.simulacao-campo .sim-label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 6px;
+}
 .simulacao-campo .sim-valor {
     font-size: 0.95rem;
-    color: #e2e8f0;
-    font-family: 'Courier New', monospace;
+    color: #f1f5f9;
+    font-family: 'SF Mono', 'Cascadia Code', 'Courier New', monospace;
 }
 
-/* Tabelas de validação e certidões */
+/* ── Verificações (Estágio 2) — CORRIGIDO: sem caixa preta ── */
+.verif-item {
+    padding: 8px 14px;
+    margin: 4px 0;
+    border-radius: 6px;
+    font-size: 0.88rem;
+    color: #f1f5f9;
+}
+.verif-conforme {
+    background: rgba(6, 78, 59, 0.25);
+    border-left: 3px solid #34d399;
+}
+.verif-ressalva {
+    background: rgba(120, 53, 15, 0.25);
+    border-left: 3px solid #fbbf24;
+}
+
+/* ── Tabelas de validação e certidões ── */
 .tabela-analise {
     width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9rem;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.88rem;
     margin-top: 8px;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #253347;
 }
-
 .tabela-analise thead tr {
-    background: #334155;
-    border-bottom: 2px solid #475569;
+    background: #1e293b;
 }
-
 .tabela-analise th {
-    padding: 10px;
+    padding: 12px 14px;
     text-align: left;
     font-weight: 600;
-    color: #e2e8f0;
+    color: #64748b;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #253347;
 }
-
 .tabela-analise th:last-child {
     text-align: center;
 }
-
 .tabela-analise td {
-    padding: 10px;
+    padding: 10px 14px;
     color: #e2e8f0;
-    border-bottom: 1px solid #334155;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.3);
 }
-
-/* Linhas de status */
+.tabela-analise tr:last-child td {
+    border-bottom: none;
+}
 .tabela-analise tr.row-conforme {
-    background: #064e3b;
+    background: rgba(6, 78, 59, 0.2);
 }
-
 .tabela-analise tr.row-ressalva {
-    background: #78350f;
+    background: rgba(120, 53, 15, 0.2);
 }
-
 .tabela-analise tr.row-bloqueio {
-    background: #7f1d1d;
+    background: rgba(127, 29, 29, 0.2);
 }
-
 .tabela-analise tr.row-neutro {
-    background: #1e293b;
+    background: transparent;
 }
 
-/* Texto com destaque de validade */
 .val-ressalva {
     color: #fbbf24;
     font-weight: 600;
 }
-
 .val-bloqueio {
     color: #f87171;
     font-weight: 600;
 }
 
-/* Banner de resultado */
-.banner-approval {
-    background: #064e3b;
-    color: #34d399;
-    border: 2px solid #065f46;
-}
-
-.banner-caveat {
-    background: #78350f;
-    color: #fbbf24;
-    border: 2px solid #92400e;
-}
-
-.banner-rejection {
-    background: #7f1d1d;
-    color: #f87171;
-    border: 2px solid #991b1b;
-}
-
+/* ── Banner resultado ── */
 .banner-resultado {
     padding: 24px;
-    border-radius: 8px;
-    font-size: 1.3rem;
+    border-radius: 10px;
+    font-size: 1.2rem;
     font-weight: 700;
     text-align: center;
     margin-bottom: 20px;
 }
-
-/* Badge de status */
-.badge-conforme {
-    background: #064e3b;
+.banner-approval {
+    background: rgba(6, 78, 59, 0.35);
     color: #34d399;
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-weight: 600;
-    display: inline-block;
-    font-size: 0.85rem;
+    border: 1px solid #065f46;
 }
-
-.badge-ressalva {
-    background: #78350f;
+.banner-caveat {
+    background: rgba(120, 53, 15, 0.35);
     color: #fbbf24;
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-weight: 600;
-    display: inline-block;
-    font-size: 0.85rem;
+    border: 1px solid #92400e;
 }
-
-.badge-bloqueio {
-    background: #7f1d1d;
+.banner-rejection {
+    background: rgba(127, 29, 29, 0.35);
     color: #f87171;
-    padding: 4px 10px;
-    border-radius: 4px;
-    font-weight: 600;
-    display: inline-block;
-    font-size: 0.85rem;
+    border: 1px solid #991b1b;
 }
 
-/* Estado vazio (sem PDF) */
+/* ── Badges ── */
+.badge-conforme {
+    background: rgba(6, 78, 59, 0.5);
+    color: #34d399;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+    display: inline-block;
+    font-size: 0.82rem;
+}
+.badge-ressalva {
+    background: rgba(120, 53, 15, 0.5);
+    color: #fbbf24;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+    display: inline-block;
+    font-size: 0.82rem;
+}
+.badge-bloqueio {
+    background: rgba(127, 29, 29, 0.5);
+    color: #f87171;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-weight: 600;
+    display: inline-block;
+    font-size: 0.82rem;
+}
+
+/* ── Estado vazio ── */
 .estado-vazio {
     text-align: center;
-    padding: 80px 20px;
+    padding: 100px 20px;
     color: #94a3b8;
 }
-
 .estado-vazio .icone {
     font-size: 64px;
     margin-bottom: 24px;
+    opacity: 0.6;
 }
-
 .estado-vazio .titulo {
     font-size: 20px;
     font-weight: 600;
     margin-bottom: 12px;
-    color: #e2e8f0;
+    color: #cbd5e1;
 }
-
 .estado-vazio .subtitulo {
     font-size: 14px;
-    color: #64748b;
+    color: #475569;
 }
 
-/* Área de despacho estilizada */
-.despacho-container {
-    border: 2px solid #475569;
-    border-radius: 8px;
-    padding: 4px;
-    background: #1e293b;
-    margin-bottom: 12px;
-}
-
+/* ── Despacho ── */
 .despacho-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 8px 12px;
-    border-bottom: 1px solid #334155;
-    background: #334155;
-    border-radius: 6px 6px 0 0;
-    margin: -4px -4px 4px -4px;
+    padding: 8px 14px;
+    background: #1e293b;
+    border-radius: 8px 8px 0 0;
+    border: 1px solid #253347;
+    border-bottom: none;
+    margin-bottom: -4px;
 }
-
 .despacho-header .dh-titulo {
     font-size: 0.85rem;
     font-weight: 600;
     color: #94a3b8;
 }
-
 .despacho-header .dh-dica {
     font-size: 0.75rem;
+    color: #475569;
+}
+
+/* ── Base de Dados (tabelas pregões/contratos) ── */
+.db-section-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid #1e293b;
+}
+.db-section-header .db-count {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 0.78rem;
+    font-weight: 600;
+}
+
+.db-table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 0.85rem;
+    border-radius: 8px;
+    overflow: hidden;
+    border: 1px solid #253347;
+    margin-bottom: 24px;
+}
+.db-table thead tr {
+    background: #1e293b;
+}
+.db-table th {
+    padding: 10px 14px;
+    text-align: left;
+    font-weight: 600;
     color: #64748b;
+    font-size: 0.73rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #253347;
+}
+.db-table td {
+    padding: 10px 14px;
+    color: #e2e8f0;
+    border-bottom: 1px solid rgba(51, 65, 85, 0.3);
+    vertical-align: top;
+}
+.db-table tr:last-child td {
+    border-bottom: none;
+}
+.db-table tr:hover td {
+    background: rgba(59, 130, 246, 0.04);
+}
+.db-table .mono {
+    font-family: 'SF Mono', 'Cascadia Code', 'Courier New', monospace;
+    font-size: 0.82rem;
+    color: #94a3b8;
+}
+.db-table .text-muted {
+    color: #64748b;
+    font-size: 0.82rem;
+}
+.db-empty {
+    text-align: center;
+    padding: 48px;
+    color: #475569;
+    font-size: 0.9rem;
 }
