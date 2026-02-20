@@ -25,9 +25,7 @@ def render_status_badge(status):
 
 
 def render_identificacao(data):
-    """Renderiza o painel de identificação em 2 colunas."""
-    col1, col2 = st.columns(2)
-
+    """Renderiza o painel de identificação com HTML customizado (cores visíveis)."""
     campos_esq = [
         ("NUP", data.get("nup", "—")),
         ("Tipo", data.get("tipo", "—")),
@@ -43,15 +41,32 @@ def render_identificacao(data):
         ("UASG", data.get("uasg", "—")),
     ]
 
-    with col1:
-        for label, valor in campos_esq:
-            st.markdown(f"**{label}**")
-            st.markdown(f"`{valor}`")
+    html = '<div class="ident-grid">'
 
-    with col2:
-        for label, valor in campos_dir:
-            st.markdown(f"**{label}**")
-            st.markdown(f"`{valor}`")
+    # Coluna esquerda
+    html += '<div>'
+    for label, valor in campos_esq:
+        html += (
+            '<div class="ident-campo">'
+            f'<div class="ident-label">{label}</div>'
+            f'<div class="ident-valor">{valor}</div>'
+            '</div>'
+        )
+    html += '</div>'
+
+    # Coluna direita
+    html += '<div>'
+    for label, valor in campos_dir:
+        html += (
+            '<div class="ident-campo">'
+            f'<div class="ident-label">{label}</div>'
+            f'<div class="ident-valor">{valor}</div>'
+            '</div>'
+        )
+    html += '</div>'
+
+    html += '</div>'
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def render_nota_credito_card(nc):
@@ -160,6 +175,16 @@ def render_certidoes_table(certidoes):
         )
 
     html += "</tbody></table>"
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def render_verificacoes_req(validacoes):
+    """Renderiza verificações da requisição com HTML estilizado (sem caixa preta)."""
+    html = ''
+    for val in validacoes.values():
+        status = val.get("status", "conforme")
+        classe = "verif-conforme" if status == "conforme" else "verif-ressalva"
+        html += f'<div class="verif-item {classe}">{val["resultado"]}</div>'
     st.markdown(html, unsafe_allow_html=True)
 
 

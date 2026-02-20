@@ -13,10 +13,29 @@ Autor: Sistema SAL/CAF — Cmdo 9º Gpt Log
 
 import re
 import io
+import sys
 from typing import Optional
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 
 import pdfplumber
+
+# Configurar encoding UTF-8 para stdout/stderr (evita erros com caracteres especiais no Windows)
+if sys.platform == "win32":
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8')
+    if hasattr(sys.stderr, 'reconfigure'):
+        sys.stderr.reconfigure(encoding='utf-8')
+
+# ── Configuração de fuso horário (Campo Grande-MS: GMT-4) ──────────────
+TZ_CAMPO_GRANDE = timezone(timedelta(hours=-4))
+
+def hoje_cg() -> date:
+    """Retorna a data de hoje no fuso horário de Campo Grande (GMT-4)."""
+    return datetime.now(TZ_CAMPO_GRANDE).date()
+
+def agora_cg() -> datetime:
+    """Retorna o datetime atual no fuso horário de Campo Grande (GMT-4)."""
+    return datetime.now(TZ_CAMPO_GRANDE)
 
 # ── OCR (opcional — funciona sem, mas não extrai páginas em imagem) ──
 try:
@@ -1079,14 +1098,14 @@ def _corrigir_numero_pregao(numero: str) -> str:
         nr_corrigido = f"9{nr[1:].zfill(4)}"
         # Na verdade, o padrão é 90xxx: inserir 0 após o 9
         nr_corrigido = f"90{nr[1:]}"
-        print(f"[PREGÃO] Número corrigido: {numero} → {nr_corrigido}/{ano}")
+        print(f"[PREGÃO] Número corrigido: {numero} -> {nr_corrigido}/{ano}")
         return f"{nr_corrigido}/{ano}"
 
-    # 3 dígitos → provavelmente falta o prefixo 90
-    # Ex: 004 → 90004, 014 → 90014
+    # 3 dígitos -> provavelmente falta o prefixo 90
+    # Ex: 004 -> 90004, 014 -> 90014
     if len(nr) <= 3:
         nr_corrigido = f"90{nr.zfill(3)}"
-        print(f"[PREGÃO] Número corrigido: {numero} → {nr_corrigido}/{ano}")
+        print(f"[PREGÃO] Número corrigido: {numero} -> {nr_corrigido}/{ano}")
         return f"{nr_corrigido}/{ano}"
 
     return numero
@@ -1558,32 +1577,333 @@ def _parsear_itens_ocr(texto_ocr: str) -> list[dict]:
 
     O OCR de tabelas em imagem produz texto desorganizado (colunas misturadas,
     quebras de linha no meio de campos). A estratégia é holística:
-    1. Extrair todos os dados-chave do texto inteiro (CatMat, R$, ND, QTD)
-    2. Montar o item a partir das peças encontradas
+    1. Detectar múltiplos itens (por número de item ou múltiplos CatMats)
+    2. Para cada item, extrair dados-chave (CatMat, R$, ND, QTD)
+    3. Montar o item a partir das peças encontradas
     """
     if not texto_ocr:
         return []
 
     texto_completo = " ".join(texto_ocr.split())  # normalizar espaços
+    linhas = texto_ocr.split("\n")
 
-    # ── CatMat/CatServ (código 5-6 dígitos, geralmente 3xxxxx ou 4xxxxx) ──
-    catmats = re.findall(r"\b([3-4]\d{5})\b", texto_completo)
-    catmat = catmats[0] if catmats else None
+    # ── ESTRATÉGIA 1: Detectar múltiplos itens por número de item ──
+    # Procurar padrões como "00001 -", "00002 -", "228", "235", etc.
+    # Padrão 1: número seguido de hífen/traço e letra (ex: "00001 - DESCRIÇÃO")
+    itens_numeros = []
+    for match in re.finditer(r"\b(\d{3,5})\s*[-–]\s+[A-Z]", texto_ocr, re.MULTILINE):
+        item_num = int(match.group(1))
+        pos_inicio = match.start()
+        linha_idx = texto_ocr[:pos_inicio].count("\n")
+        itens_numeros.append({
+            "numero": item_num,
+            "posicao": pos_inicio,
+            "linha": linha_idx,
+        })
+    
+    # Padrão 2: números de item isolados (ex: "228", "235") que aparecem antes de descrições
+    # Procurar por números de 3 dígitos que não são CatMat, CNPJ, ou valores monetários
+    # e que aparecem em contexto de tabela de itens
+    numeros_item_isolados = []
+    for match in re.finditer(r"\b(\d{3})\b", texto_ocr):
+        num = match.group(1)
+        num_int = int(num)
+        pos = match.start()
+        
+        # Verificar contexto: deve estar em contexto de tabela (próximo a palavras-chave)
+        contexto_antes = texto_ocr[max(0, pos-50):pos].upper()
+        contexto_depois = texto_ocr[pos:min(len(texto_ocr), pos+100)].upper()
+        
+        # Excluir se é parte de outro campo
+        if ("R$" in contexto_antes or 
+            "." in contexto_antes[-3:] or  # pode ser parte de valor
+            "/" in contexto_depois[:10] or  # pode ser parte de data/CNPJ/ND
+            re.match(r"^[3-4]\d{5}$", num)):  # é CatMat
+            continue
+        
+        # Verificar se está em contexto de item (próximo a "ITEM", descrição, ou valores)
+        tem_contexto_item = (
+            "ITEM" in contexto_antes or
+            any(palavra in contexto_depois[:50] for palavra in ["KG", "UN", "UND", "R$", "DESCRI"])
+        )
+        
+        # Aceitar números de item típicos (100-999, mas não muito próximos de outros números)
+        if 100 <= num_int <= 999 and tem_contexto_item:
+            # Verificar se não é duplicata de um número já encontrado
+            if not any(abs(n["numero"] - num_int) < 5 for n in itens_numeros):
+                linha_idx = texto_ocr[:pos].count("\n")
+                numeros_item_isolados.append({
+                    "numero": num_int,
+                    "posicao": pos,
+                    "linha": linha_idx,
+                })
+    
+    # Combinar ambos os padrões e remover duplicatas
+    todos_numeros_item = itens_numeros + numeros_item_isolados
+    # Remover duplicatas por número (manter o primeiro encontrado)
+    itens_numeros_unicos = []
+    numeros_vistos = set()
+    for item_info in sorted(todos_numeros_item, key=lambda x: x["posicao"]):
+        if item_info["numero"] not in numeros_vistos:
+            itens_numeros_unicos.append(item_info)
+            numeros_vistos.add(item_info["numero"])
+    
+    itens_numeros = sorted(itens_numeros_unicos, key=lambda x: x["posicao"])
 
-    # ── Número do item (ex: "00001 -" no início de trecho) ──
-    # Exige que venha com separador " - " para não confundir com CNPJ
-    item_match = re.search(r"\b(\d{4,5})\s*[-–]\s+[A-Z]", texto_ocr, re.MULTILINE)
-    if item_match:
-        item_num = int(item_match.group(1))
+    # ── ESTRATÉGIA 2: Detectar múltiplos CatMats (cada CatMat = 1 item) ──
+    # CatMat pode ser 5 ou 6 dígitos começando com 1, 3 ou 4
+    catmats = re.findall(r"\b([1-4]\d{4,5})\b", texto_completo)
+    # Remover duplicatas mantendo ordem
+    catmats_unicos = []
+    for cat in catmats:
+        # Validar: deve ter 5 ou 6 dígitos e começar com 1, 3 ou 4
+        if len(cat) in [5, 6] and cat[0] in ['1', '3', '4']:
+            if cat not in catmats_unicos:
+                catmats_unicos.append(cat)
+
+    # ── ESTRATÉGIA 2b: Detectar múltiplas quantidades ou valores (indicam múltiplos itens) ──
+    # Procurar padrões de quantidade (ex: "3617 KG", "500 UN", ou números grandes sozinhos)
+    # Padrão mais flexível: número seguido de unidade OU número grande isolado
+    quantidades_com_unidade = re.findall(r"\b(\d{2,6})\s*(?:KG|UN|UND|L|M2|M3|CX|PCT|LT|HR|SV|MÊS)\b", texto_completo, re.IGNORECASE)
+    # Também procurar números grandes que podem ser quantidades (3+ dígitos)
+    numeros_grandes = re.findall(r"\b(\d{3,6})\b", texto_completo)
+    # Filtrar números que não são CatMat, CNPJ, ou valores monetários
+    numeros_grandes_filtrados = [n for n in numeros_grandes 
+                                  if not re.match(r"^[3-4]\d{5}$", n)  # não é CatMat
+                                  and not re.match(r"^\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}$", n)  # não é CNPJ
+                                  and len(n) >= 3]
+    
+    # Procurar múltiplos valores monetários significativos
+    valores_monetarios = re.findall(r"R\$\s*([\d.]+,\d{2})", texto_completo)
+    valores_float = [_parse_valor_br(v) for v in valores_monetarios if _parse_valor_br(v)]
+    
+    # Se há 2+ quantidades com unidade OU 2+ números grandes (que podem ser quantidades) OU 3+ valores monetários
+    tem_multiplos_sinais = (len(quantidades_com_unidade) >= 2) or (len(numeros_grandes_filtrados) >= 2) or (len(valores_float) >= 3)
+
+    # ── Decidir quantos itens há ──
+    num_itens_esperado = max(len(itens_numeros), len(catmats_unicos), 1)
+    if tem_multiplos_sinais and len(catmats_unicos) == 1:
+        # Se há apenas 1 CatMat mas múltiplos sinais, assumir 2 itens
+        num_itens_esperado = max(num_itens_esperado, 2)
+
+    # Se encontrou números de item explícitos, usar esses (prioridade máxima)
+    if len(itens_numeros) >= 2:
+        # Processar cada item separadamente
+        itens = []
+        numeros_item_usados = set()  # Evitar duplicatas
+        
+        for i, item_info in enumerate(itens_numeros):
+            item_num = item_info["numero"]
+            
+            # Pular se já processamos este número de item
+            if item_num in numeros_item_usados:
+                continue
+            
+            linha_inicio = item_info["linha"]
+            linha_fim = itens_numeros[i + 1]["linha"] if i + 1 < len(itens_numeros) else len(linhas)
+            
+            # Extrair trecho do texto para este item
+            trecho_linhas = linhas[linha_inicio:linha_fim]
+            trecho_texto = "\n".join(trecho_linhas)
+            trecho_completo = " ".join(trecho_texto.split())
+
+            # Extrair dados deste item específico
+            # Tentar encontrar o CatMat mais próximo deste número de item
+            catmat_proximo = None
+            if catmats_unicos:
+                # Procurar CatMat no trecho deste item
+                for cat in catmats_unicos:
+                    if cat in trecho_completo:
+                        catmat_proximo = cat
+                        break
+                # Se não encontrou no trecho, usar o primeiro disponível
+                if not catmat_proximo and len(catmats_unicos) > len(itens):
+                    catmat_proximo = catmats_unicos[len(itens)]
+            
+            item_dict = _extrair_item_ocr_individual(trecho_texto, trecho_completo, item_num, catmat_proximo)
+            if item_dict:
+                # Garantir que o número do item está correto
+                item_dict["item"] = item_num
+                itens.append(item_dict)
+                numeros_item_usados.add(item_num)
+        
+        # Remover duplicatas baseadas no número do item (manter o primeiro)
+        itens_unicos = []
+        numeros_vistos = set()
+        for item in itens:
+            if item["item"] not in numeros_vistos:
+                itens_unicos.append(item)
+                numeros_vistos.add(item["item"])
+        
+        if itens_unicos:
+            print(f"[OCR] {len(itens_unicos)} item(ns) extraído(s) via OCR (números de item: {sorted(numeros_vistos)})")
+            return itens_unicos
+
+    # ── ESTRATÉGIA 3: Múltiplos CatMats sem números de item explícitos ──
+    if len(catmats_unicos) >= 2:
+        itens = []
+        for i, catmat in enumerate(catmats_unicos):
+            # Encontrar posição do CatMat no texto
+            pos_cat = texto_completo.find(catmat)
+            if pos_cat < 0:
+                continue
+            
+            # Delimitar trecho: do CatMat atual até o próximo (ou fim)
+            pos_fim = len(texto_completo)
+            if i + 1 < len(catmats_unicos):
+                pos_prox = texto_completo.find(catmats_unicos[i + 1], pos_cat + 1)
+                if pos_prox > pos_cat:
+                    pos_fim = pos_prox
+            
+            # Converter posições para linhas
+            trecho_texto = texto_ocr[pos_cat:pos_fim] if pos_fim < len(texto_ocr) else texto_ocr[pos_cat:]
+            trecho_completo = " ".join(trecho_texto.split())
+
+            item_num = i + 1  # numerar sequencialmente
+            item_dict = _extrair_item_ocr_individual(trecho_texto, trecho_completo, item_num, catmat)
+            if item_dict:
+                itens.append(item_dict)
+        
+        if itens:
+            return itens
+
+    # ── ESTRATÉGIA 4: 1 CatMat mas múltiplos sinais (quantidades/valores) ──
+    # Dividir o texto em seções baseado em quantidades ou valores monetários
+    # SÓ usar esta estratégia se NÃO encontrou números de item explícitos
+    if len(catmats_unicos) == 1 and tem_multiplos_sinais and len(itens_numeros) < 2:
+        catmat = catmats_unicos[0]
+        itens = []
+        
+        # Encontrar todas as quantidades no texto (com contexto)
+        # Padrão mais flexível: número seguido de unidade, mesmo com espaços
+        qtd_matches = list(re.finditer(r"\b(\d{2,6})\s*(?:KG|UN|UND|L|M2|M3|CX|PCT|LT|HR|SV|MÊS)\b", texto_ocr, re.IGNORECASE))
+        
+        # Também procurar por números grandes que podem ser quantidades sem unidade explícita
+        # (no OCR, a unidade pode estar em outra linha ou não ser capturada)
+        # Mas ser mais restritivo: apenas números realmente grandes (4+ dígitos) e que não sejam
+        # parte de outros campos
+        numeros_grandes_matches = list(re.finditer(r"\b(\d{4,6})\b", texto_ocr))
+        numeros_validos = []
+        for match in numeros_grandes_matches:
+            num = match.group(1)
+            num_int = int(num)
+            pos = match.start()
+            # Verificar contexto: não é CatMat, não é parte de CNPJ, não é valor monetário
+            contexto_antes = texto_ocr[max(0, pos-15):pos].upper()
+            contexto_depois = texto_ocr[pos:min(len(texto_ocr), pos+15)].upper()
+            
+            # Excluir se parece ser parte de outro campo
+            if ("R$" in contexto_antes or 
+                "." in contexto_antes[-5:] or  # pode ser parte de valor
+                "/" in contexto_depois[:5] or   # pode ser parte de data/CNPJ
+                re.match(r"^[3-4]\d{5}$", num)):  # é CatMat
+                continue
+            
+            # Aceitar apenas números que fazem sentido como quantidade (não muito grandes)
+            # Quantidades típicas: 1-99999
+            if 1 <= num_int <= 99999:
+                numeros_validos.append(match)
+        
+        # Combinar quantidades com unidade e números grandes válidos
+        todas_quantidades = sorted(qtd_matches + numeros_validos, key=lambda m: m.start())
+        # Remover duplicatas próximas (mesmo número em posições muito próximas)
+        quantidades_unicas = []
+        for match in todas_quantidades:
+            if not quantidades_unicas:
+                quantidades_unicas.append(match)
+            else:
+                # Só adicionar se estiver suficientemente distante e for um número diferente
+                ultimo_match = quantidades_unicas[-1]
+                distancia = match.start() - ultimo_match.start()
+                num_atual = match.group(1)
+                num_anterior = ultimo_match.group(1)
+                
+                # Se é o mesmo número muito próximo, ignorar (duplicata)
+                if num_atual == num_anterior and distancia < 100:
+                    continue
+                # Se está muito próximo mas é número diferente, pode ser parte do mesmo item
+                if distancia < 30:
+                    continue
+                quantidades_unicas.append(match)
+        
+        # Se encontrou 2+ quantidades, dividir o texto por elas
+        if len(quantidades_unicas) >= 2:
+            # Ordenar por posição no texto
+            quantidades_unicas.sort(key=lambda m: m.start())
+            
+            # Limitar a 2 itens máximo (evitar falsos positivos)
+            quantidades_unicas = quantidades_unicas[:2]
+            
+            for i, qtd_match in enumerate(quantidades_unicas):
+                qtd_valor = qtd_match.group(1)
+                pos_inicio = qtd_match.start()
+                
+                # Determinar fim do trecho: início da próxima quantidade ou fim do texto
+                if i + 1 < len(quantidades_unicas):
+                    pos_fim = quantidades_unicas[i + 1].start()
+                else:
+                    pos_fim = len(texto_ocr)
+                
+                # Pegar trecho completo deste item (do início até o próximo)
+                # Incluir um pouco antes para pegar descrição que pode estar acima
+                contexto_antes = max(0, pos_inicio - 300)
+                trecho_texto = texto_ocr[contexto_antes:pos_fim]
+                trecho_completo = " ".join(trecho_texto.split())
+                
+                # Extrair item deste trecho
+                item_num = i + 1
+                # Usar o CatMat para todos os itens (mesmo CatMat, múltiplos itens)
+                item_dict = _extrair_item_ocr_individual(trecho_texto, trecho_completo, item_num, catmat)
+                
+                if item_dict:
+                    # Garantir que a quantidade extraída corresponde à encontrada
+                    if not item_dict.get("qtd") or abs(item_dict.get("qtd", 0) - float(qtd_valor)) > 0.1:
+                        # Forçar a quantidade encontrada
+                        try:
+                            item_dict["qtd"] = float(qtd_valor)
+                        except:
+                            pass
+                    
+                    # Garantir CatMat
+                    if not item_dict.get("catserv") and catmat:
+                        item_dict["catserv"] = catmat
+                    
+                    itens.append(item_dict)
+            
+            # Se conseguiu extrair exatamente 2 itens válidos, retornar
+            if len(itens) == 2:
+                print(f"[OCR] {len(itens)} item(ns) extraído(s) via OCR (múltiplos sinais detectados)")
+                return itens
+
+    # ── FALLBACK: Processar como item único (lógica original) ──
+    item_dict = _extrair_item_ocr_individual(texto_ocr, texto_completo, 1)
+    if item_dict:
+        return [item_dict]
+    
+    return []
+
+
+def _extrair_item_ocr_individual(trecho_texto: str, trecho_completo: str,
+                                  item_num: int, catmat_forcado: str = None) -> Optional[dict]:
+    """
+    Extrai dados de um item individual a partir de um trecho de texto OCR.
+    """
+    # ── CatMat/CatServ ──
+    if catmat_forcado:
+        catmat = catmat_forcado
     else:
-        item_num = 1
+        # CatMat pode ser 5 ou 6 dígitos começando com 1, 3 ou 4
+        catmats = re.findall(r"\b([1-4]\d{4,5})\b", trecho_completo)
+        # Filtrar apenas os válidos (5-6 dígitos, começando com 1, 3 ou 4)
+        catmats_validos = [c for c in catmats if len(c) in [5, 6] and c[0] in ['1', '3', '4']]
+        catmat = catmats_validos[0] if catmats_validos else None
 
     # ── ND/SI (padrão XX/XX, excluindo CNPJ que tem /XXXX) ──
-    nd_match = re.search(r"\b(\d{2})/(\d{2})\b(?!\d)", texto_completo)
+    nd_match = re.search(r"\b(\d{2})/(\d{2})\b(?!\d)", trecho_completo)
     nd_si = f"{nd_match.group(1)}/{nd_match.group(2)}" if nd_match else None
 
     # ── Valores monetários (R$ X.XXX,XX ou R$X,XX) ──
-    valores = re.findall(r"R\$\s*([\d.]+,\d{2})", texto_completo)
+    valores = re.findall(r"R\$\s*([\d.]+,\d{2})", trecho_completo)
     valores_float = [_parse_valor_br(v) for v in valores if _parse_valor_br(v)]
 
     # Identificar unit/total: menor = unitário, maior = total
@@ -1597,14 +1917,11 @@ def _parsear_itens_ocr(texto_ocr: str) -> list[dict]:
         p_total = valores_float[0]
 
     # ── TOTAL FORNECEDOR (confirmação do total) ──
-    # OCR pode trocar ponto por vírgula: "19,495,63" em vez de "19.495,63"
-    # OCR pode colocar "R " em vez de "R$" antes do valor
     total_forn = re.search(
-        r"TOTAL\s+FORNECEDOR\s+(?:R[\$\s]?\s*)?([\d.,]+)", texto_completo
+        r"TOTAL\s+FORNECEDOR\s+(?:R[\$\s]?\s*)?([\d.,]+)", trecho_completo
     )
     if total_forn:
         total_str = total_forn.group(1)
-        # Corrigir OCR: se há 2+ vírgulas, a última é decimal, as demais são milhar
         if total_str.count(",") >= 2:
             partes = total_str.rsplit(",", 1)
             milhar = partes[0].replace(",", ".")
@@ -1615,47 +1932,56 @@ def _parsear_itens_ocr(texto_ocr: str) -> list[dict]:
 
     # ── Quantidade ──
     qtd = None
-    # Buscar quantidade entre catmat e R$ (posição natural na tabela)
-    if catmat:
-        pos_cat = texto_completo.find(catmat)
-        pos_rs = texto_completo.find("R$")
+    # Prioridade 1: buscar quantidade perto de UND/KG (mais confiável)
+    qtd_vizinha = re.search(
+        r"\b(\d{1,4})\s*(?:KG|UN|UND|L|M2|CX|PCT|LT|HR|SV|M)\b",
+        trecho_completo, re.IGNORECASE
+    )
+    if qtd_vizinha:
+        num_qtd = int(qtd_vizinha.group(1))
+        # Quantidades típicas: 1-9999 (evitar números muito grandes)
+        if 1 <= num_qtd <= 9999:
+            qtd = float(num_qtd)
+    
+    # Prioridade 2: buscar entre CatMat e R$ (se não encontrou com unidade)
+    if qtd is None and catmat:
+        pos_cat = trecho_completo.find(catmat)
+        pos_rs = trecho_completo.find("R$", pos_cat)
         if pos_cat >= 0 and pos_rs > pos_cat:
-            trecho = texto_completo[pos_cat + len(catmat):pos_rs]
-            nums = re.findall(r"\b(\d{2,5})\b", trecho)
+            trecho = trecho_completo[pos_cat + len(catmat):pos_rs]
+            # Procurar números pequenos (1-4 dígitos) que não sejam parte de valores grandes
+            nums = re.findall(r"\b(\d{1,4})\b", trecho)
             for n in nums:
                 n_int = int(n)
                 nd_nums = []
                 if nd_match:
                     nd_nums = [nd_match.group(1), nd_match.group(2)]
-                if 10 < n_int < 50000 and n not in nd_nums:
-                    qtd = float(n_int)
-                    break
-
-    # Fallback: buscar quantidade perto de UND/KG
-    if qtd is None:
-        qtd_vizinha = re.search(
-            r"\b(\d{2,6})\s*(?:KG|UN|UND|L|M2|CX|PCT|LT|HR|SV)\b",
-            texto_completo, re.IGNORECASE
-        )
-        if qtd_vizinha:
-            qtd = float(int(qtd_vizinha.group(1)))
+                # Aceitar apenas números razoáveis (1-9999) e que não sejam ND/SI
+                if 1 <= n_int <= 9999 and n not in nd_nums:
+                    # Verificar se não é parte de um número maior (ex: 30.222)
+                    pos_num = trecho.find(n)
+                    if pos_num >= 0:
+                        contexto_antes = trecho[max(0, pos_num-3):pos_num]
+                        contexto_depois = trecho[pos_num+len(n):min(len(trecho), pos_num+len(n)+3)]
+                        # Se tem ponto ou vírgula próximo, pode ser parte de número maior
+                        if "." not in contexto_antes and "." not in contexto_depois[:1]:
+                            qtd = float(n_int)
+                            break
 
     # ── Unidade ──
     und_match = re.search(
         r"\b(KG|UN|UND|L|M|M2|M3|CX|PCT|PAR|JG|GL|LT|HR|SV|MÊS)\b",
-        texto_completo, re.IGNORECASE
+        trecho_completo, re.IGNORECASE
     )
     und = und_match.group(1).upper() if und_match else None
 
     # ── Descrição do produto ──
-    # Buscar sequência de palavras maiúsculas que descreve o produto
-    # (geralmente depois do CatMat ou do item)
-    descricao = _extrair_descricao_ocr(texto_ocr, catmat)
+    descricao = _extrair_descricao_ocr(trecho_texto, catmat)
 
     if not descricao and not catmat and not p_total:
-        return []  # nenhum dado útil encontrado
+        return None  # nenhum dado útil encontrado
 
-    return [{
+    return {
         "item": item_num,
         "catserv": catmat,
         "descricao": descricao,
@@ -1665,7 +1991,7 @@ def _parsear_itens_ocr(texto_ocr: str) -> list[dict]:
         "p_unit": p_unit,
         "p_total": p_total,
         "fonte": "ocr",
-    }]
+    }
 
 
 def _extrair_descricao_ocr(texto_ocr: str, catmat: str = None) -> str:
@@ -2096,7 +2422,7 @@ def _extrair_nc_demonstra_diario(texto: str) -> list[dict]:
     if nc["prazo_empenho"]:
         dt = parse_data_flexivel(nc["prazo_empenho"])
         if dt:
-            nc["dias_restantes"] = (dt.date() - date.today()).days
+            nc["dias_restantes"] = (dt.date() - hoje_cg()).days
 
     return [nc]
 
@@ -2310,7 +2636,7 @@ def _extrair_nc_padrao(texto: str) -> list[dict]:
         if nc["prazo_empenho"]:
             dt = parse_data_flexivel(nc["prazo_empenho"])
             if dt:
-                nc["dias_restantes"] = (dt.date() - date.today()).days
+                nc["dias_restantes"] = (dt.date() - hoje_cg()).days
 
         ncs.append(nc)
 
@@ -2632,7 +2958,9 @@ def _validar_contrato(identificacao: dict, dados_contrato: Optional[dict],
     if vig_fim_str:
         try:
             vig_fim = datetime.strptime(vig_fim_str, "%d/%m/%Y")
-            hoje = datetime.now()
+            # Converter para timezone-aware (usar início do dia em Campo Grande)
+            vig_fim = vig_fim.replace(tzinfo=TZ_CAMPO_GRANDE)
+            hoje = agora_cg()
             if vig_fim < hoje:
                 dias_vencido = (hoje - vig_fim).days
                 validacoes.append({
@@ -3156,7 +3484,7 @@ def _complementar_nc_com_req(ncs: list[dict], identificacao: dict) -> None:
                     from datetime import timedelta
                     dt_prazo = dt_emissao + timedelta(days=int(m.group(1)))
                     nc["prazo_empenho"] = dt_prazo.strftime("%d/%m/%Y")
-                    nc["dias_restantes"] = (dt_prazo.date() - date.today()).days
+                    nc["dias_restantes"] = (dt_prazo.date() - hoje_cg()).days
 
         # ── Calcular saldo via valor_total se saldo não extraído ──
         if nc.get("saldo") is None and nc.get("valor_total") is not None:

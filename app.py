@@ -4,11 +4,22 @@ import time
 import os
 import json
 import tempfile
-from datetime import datetime, date
+from datetime import datetime, date, timezone, timedelta
 from modules import (
     mock_data, components, database, extractor,
     validator, ne_generator, despacho_generator,
 )
+
+# ── Configuração de fuso horário (Campo Grande-MS: GMT-4) ──────────────
+TZ_CAMPO_GRANDE = timezone(timedelta(hours=-4))
+
+def hoje_cg() -> date:
+    """Retorna a data de hoje no fuso horário de Campo Grande (GMT-4)."""
+    return datetime.now(TZ_CAMPO_GRANDE).date()
+
+def agora_cg() -> datetime:
+    """Retorna o datetime atual no fuso horário de Campo Grande (GMT-4)."""
+    return datetime.now(TZ_CAMPO_GRANDE)
 
 # ── Configuração da página ──────────────────────────────────────────
 st.set_page_config(
@@ -164,17 +175,47 @@ def _processar_pdf(pdf_file) -> dict:
     """
     Salva o PDF carregado em arquivo temporário, extrai os dados
     com o módulo extractor e retorna o resultado.
-    Em caso de erro, retorna dict vazio.
+    
+    Em caso de erro, levanta exceção com mensagem clara.
     """
     tmp_path = None
     try:
+        # Validar tamanho do arquivo (máximo 50MB)
+        tamanho_mb = len(pdf_file.getvalue()) / (1024 * 1024)
+        if tamanho_mb > 50:
+            raise ValueError(
+                f"Arquivo muito grande ({tamanho_mb:.1f} MB). "
+                "O tamanho máximo permitido é 50 MB."
+            )
+        
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(pdf_file.getvalue())
             tmp_path = tmp.name
-        return extractor.extrair_processo(tmp_path)
+        
+        resultado = extractor.extrair_processo(tmp_path)
+        
+        # Validar se extração retornou dados mínimos
+        if not resultado or not isinstance(resultado, dict):
+            raise ValueError(
+                "A extração do PDF não retornou dados válidos. "
+                "Verifique se o arquivo é um PDF compilado válido."
+            )
+        
+        return resultado
+        
+    except ValueError as e:
+        # Erros de validação - re-raise com mensagem clara
+        raise
     except Exception as e:
-        print(f"[ERRO] Falha na extração do PDF '{pdf_file.name}': {e}")
-        return {}
+        # Outros erros - fornecer contexto
+        raise Exception(
+            f"Erro ao processar o PDF '{pdf_file.name}': {str(e)}\n\n"
+            "Possíveis causas:\n"
+            "- Arquivo corrompido ou incompleto\n"
+            "- Formato de PDF não suportado\n"
+            "- Problema temporário de leitura\n\n"
+            "Tente novamente ou verifique o arquivo."
+        ) from e
     finally:
         if tmp_path:
             try:
@@ -520,7 +561,7 @@ def _dias_ate(data_str: str) -> int | None:
     """Calcula dias entre hoje e data DD/MM/YYYY. Retorna None se inválida."""
     try:
         dt = datetime.strptime(data_str, "%d/%m/%Y").date()
-        return (dt - date.today()).days
+        return (dt - hoje_cg()).days
     except (ValueError, TypeError):
         return None
 
@@ -730,8 +771,23 @@ analise_sem_nc = st.sidebar.toggle("Análise sem NC?", value=False)
 
 st.sidebar.divider()
 
-# ── Histórico de Análises ────────────────────────────────────────────
-st.sidebar.markdown("### 📊 Histórico")
+# ── Navegação ─────────────────────────────────────────────────────────
+pagina = st.sidebar.radio(
+    "Navegação",
+    ["📋 Análise", "📊 Histórico", "📦 Base de Dados"],
+    label_visibility="collapsed",
+)
+
+st.sidebar.divider()
+
+# ── Link para histórico completo ───────────────────────────────
+if st.sidebar.button("📊 Ver Histórico Completo", use_container_width=True):
+    st.switch_page("pages/1_Historico.py")
+
+st.sidebar.divider()
+
+# ── Histórico de Análises (resumo rápido) ────────────────────────────
+st.sidebar.markdown("### 📊 Histórico Rápido")
 
 historico = database.listar_analises(limite=20)
 
@@ -779,86 +835,186 @@ else:
     st.sidebar.markdown("*Nenhuma análise salva ainda*")
 
 st.sidebar.divider()
+st.sidebar.markdown("**v0.5.0 — Interface Renovada**")
 
-# ── Base de Pregões ──────────────────────────────────────────────────
-st.sidebar.markdown("### 📦 Base de Pregões")
 
-pregoes_db = database.listar_pregoes(limite=30)
+# ══════════════════════════════════════════════════════════════════════
+# PÁGINA: HISTÓRICO
+# ══════════════════════════════════════════════════════════════════════
+if pagina == "📊 Histórico":
+    st.info("📊 **Página de Histórico** — Use o menu lateral para acessar a página dedicada com busca, filtros e estatísticas completas.")
+    st.markdown("---")
+    
+    # Botão para acessar página completa
+    st.markdown("### Acesse a página completa:")
+    if st.button("🔗 Ir para Histórico Completo", use_container_width=True, type="primary"):
+        st.switch_page("pages/1_Historico.py")
+    
+    # Mostrar resumo rápido
+    stats = database.obter_estatisticas_analises()
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Total", stats["total"])
+    with col2:
+        st.metric("🟢 Aprovadas", stats["por_resultado"].get("approval", 0))
+    with col3:
+        st.metric("⚠️ Ressalvas", stats["por_resultado"].get("caveat", 0))
+    
+    st.stop()
 
-if pregoes_db:
-    for pg in pregoes_db:
-        nr = pg["numero"]
-        uasg = pg.get("uasg_gerenciadora") or "—"
-        om = pg.get("nome_om_gerenciadora") or ""
-        n_fornec = len(pg.get("fornecedores", []))
-        n_proc = len(pg.get("processos_vinculados", []))
 
-        with st.sidebar.expander(f"PE {nr} — UASG {uasg}", expanded=False):
-            if om:
-                st.caption(f"OM Gerenciadora: {om}")
-            if pg.get("objeto"):
-                st.caption(f"Objeto: {pg['objeto']}")
-            st.caption(
-                f"Fornecedores: {n_fornec} · "
-                f"Processos: {n_proc}"
+# ══════════════════════════════════════════════════════════════════════
+# PÁGINA: BASE DE DADOS (Pregões e Contratos)
+# ══════════════════════════════════════════════════════════════════════
+if pagina == "📦 Base de Dados":
+
+    # ── Pregões (Licitações) ─────────────────────────────────────────
+    pregoes_db = database.listar_pregoes(limite=50)
+
+    st.markdown(
+        '<div class="db-section-header">'
+        '<h4 style="margin:0;color:#e2e8f0">📦 Pregões Eletrônicos</h4>'
+        f'<span class="db-count">{len(pregoes_db)} registrado(s)</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
+
+    if pregoes_db:
+        html_pe = '<table class="db-table"><thead><tr>'
+        html_pe += '<th>Nº PE</th><th>OM Gerenciadora</th><th>Objeto</th>'
+        html_pe += '<th>Fornecedores</th><th>Processos</th><th>CNPJ / Razão Social</th>'
+        html_pe += '</tr></thead><tbody>'
+
+        for pg in pregoes_db:
+            nr = pg.get("numero", "—")
+            uasg = pg.get("uasg_gerenciadora") or "—"
+            om = pg.get("nome_om_gerenciadora") or "—"
+            om_display = f"{uasg} — {om}" if om != "—" else uasg
+            objeto = (pg.get("objeto") or "—")[:80]
+            fornecedores = pg.get("fornecedores", [])
+            n_fornec = len(fornecedores)
+            n_proc = len(pg.get("processos_vinculados", []))
+
+            # Montar lista de fornecedores
+            forn_html = ""
+            if fornecedores:
+                for f in fornecedores:
+                    cnpj = f.get("cnpj", "—")
+                    razao = f.get("razao_social", "")
+                    forn_html += f'<span class="mono">{cnpj}</span> {razao}<br>'
+            else:
+                forn_html = '<span class="text-muted">—</span>'
+
+            html_pe += (
+                f'<tr>'
+                f'<td><strong>PE {nr}</strong></td>'
+                f'<td>{om_display}</td>'
+                f'<td>{objeto}</td>'
+                f'<td style="text-align:center">{n_fornec}</td>'
+                f'<td style="text-align:center">{n_proc}</td>'
+                f'<td>{forn_html}</td>'
+                f'</tr>'
             )
-            # Listar fornecedores
-            for forn in pg.get("fornecedores", []):
-                cnpj = forn.get("cnpj", "—")
-                razao = forn.get("razao_social", "")
-                st.markdown(f"- `{cnpj}` {razao}")
-            # Listar processos vinculados
-            if pg.get("processos_vinculados"):
-                procs = ", ".join(pg["processos_vinculados"])
-                st.markdown(f"📄 NUPs: {procs}")
 
-    st.sidebar.caption(f"{len(pregoes_db)} pregão(ões) cadastrado(s)")
-else:
-    st.sidebar.markdown("*Nenhum pregão registrado ainda*")
+        html_pe += '</tbody></table>'
+        st.markdown(html_pe, unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div class="db-empty">Nenhum pregão registrado ainda.<br>'
+            '<small>Pregões são registrados automaticamente ao analisar processos.</small></div>',
+            unsafe_allow_html=True,
+        )
 
-# ── Base de Contratos ────────────────────────────────────────────────
-st.sidebar.markdown("### 📄 Base de Contratos")
+    st.markdown("")
+    st.markdown("")
 
-contratos_db = database.listar_contratos(limite=30)
+    # ── Contratos ────────────────────────────────────────────────────
+    contratos_db = database.listar_contratos(limite=50)
 
-if contratos_db:
-    for ct in contratos_db:
-        nr = ct["numero"]
-        contratada = ct.get("contratada") or "—"
-        n_proc = len(ct.get("processos_vinculados", []))
+    st.markdown(
+        '<div class="db-section-header">'
+        '<h4 style="margin:0;color:#e2e8f0">📄 Contratos</h4>'
+        f'<span class="db-count">{len(contratos_db)} registrado(s)</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
-        with st.sidebar.expander(f"Contrato {nr}", expanded=False):
-            if ct.get("contratada"):
-                st.caption(f"Contratada: {ct['contratada']}")
-            if ct.get("cnpj_contratada"):
-                st.caption(f"CNPJ: {ct['cnpj_contratada']}")
-            if ct.get("objeto"):
-                obj_resumo = ct['objeto'][:100]
-                st.caption(f"Objeto: {obj_resumo}")
-            if ct.get("valor_total"):
-                st.caption(f"Valor: {ct['valor_total']}")
-            if ct.get("vigencia_inicio"):
-                st.caption(f"Vigência: {ct['vigencia_inicio']} a {ct.get('vigencia_fim', '—')}")
-            if ct.get("pregao_origem"):
-                st.caption(f"Pregão de origem: PE {ct['pregao_origem']}")
-            assin = "Sim ✅" if ct.get("tem_assinaturas") else "Não ⚠️"
-            st.caption(f"Assinaturas: {assin}")
-            if ct.get("processos_vinculados"):
-                procs = ", ".join(ct["processos_vinculados"])
-                st.markdown(f"📄 NUPs: {procs}")
+    if contratos_db:
+        html_ct = '<table class="db-table"><thead><tr>'
+        html_ct += '<th>Nº Contrato</th><th>Objeto</th><th>Processos</th>'
+        html_ct += '<th>CNPJ / Contratada</th><th>Vigência</th><th>PE Origem</th>'
+        html_ct += '</tr></thead><tbody>'
 
-    st.sidebar.caption(f"{len(contratos_db)} contrato(s) cadastrado(s)")
-else:
-    st.sidebar.markdown("*Nenhum contrato registrado ainda*")
+        for ct in contratos_db:
+            nr = ct.get("numero", "—")
+            objeto = (ct.get("objeto") or "—")[:80]
+            n_proc = len(ct.get("processos_vinculados", []))
+            contratada = ct.get("contratada") or "—"
+            cnpj_ct = ct.get("cnpj_contratada") or ""
 
-st.sidebar.divider()
-st.sidebar.markdown("**v0.4.0 — Hist + Pregões + Contratos**")
+            # Vigência
+            vig_inicio = ct.get("vigencia_inicio")
+            vig_fim = ct.get("vigencia_fim")
+            if vig_inicio:
+                vigencia = f"{vig_inicio} a {vig_fim or '—'}"
+            else:
+                vigencia = "—"
+
+            # Pregão de origem — validar 5 dígitos
+            pe_origem = ct.get("pregao_origem") or "—"
+            pe_display = pe_origem
+            if pe_origem != "—":
+                pe_num = pe_origem.replace("/", "").replace("-", "").strip()
+                # Extrair apenas parte numérica antes do ano
+                pe_parts = pe_origem.split("/")
+                if pe_parts and len(pe_parts[0].strip()) == 5:
+                    pe_display = f"PE {pe_origem}"
+                elif pe_parts and pe_parts[0].strip().isdigit():
+                    pe_display = f'PE {pe_origem} <span class="text-muted">⚠️</span>'
+                else:
+                    pe_display = pe_origem
+
+            # CNPJ + nome
+            forn_display = ""
+            if cnpj_ct:
+                forn_display = f'<span class="mono">{cnpj_ct}</span><br>{contratada}'
+            else:
+                forn_display = contratada
+
+            html_ct += (
+                f'<tr>'
+                f'<td><strong>{nr}</strong></td>'
+                f'<td>{objeto}</td>'
+                f'<td style="text-align:center">{n_proc}</td>'
+                f'<td>{forn_display}</td>'
+                f'<td>{vigencia}</td>'
+                f'<td>{pe_display}</td>'
+                f'</tr>'
+            )
+
+        html_ct += '</tbody></table>'
+        st.markdown(html_ct, unsafe_allow_html=True)
+    else:
+        st.markdown(
+            '<div class="db-empty">Nenhum contrato registrado ainda.<br>'
+            '<small>Contratos são registrados automaticamente ao analisar processos.</small></div>',
+            unsafe_allow_html=True,
+        )
+
+    # Rodapé
+    st.markdown("---")
+    st.caption("Base de Dados Orgânica • SAL/CAF — Cmdo 9º Gpt Log")
+    st.stop()
 
 
 # ══════════════════════════════════════════════════════════════════════
-# MODO HISTÓRICO — Carregar análise salva
+# PÁGINA: ANÁLISE
 # ══════════════════════════════════════════════════════════════════════
-_modo_historico = False
+if pagina == "📋 Análise":
+    # ══════════════════════════════════════════════════════════════════════
+    # MODO HISTÓRICO — Carregar análise salva
+    # ══════════════════════════════════════════════════════════════════════
+    _modo_historico = False
 
 if "carregar_analise_id" in st.session_state:
     _analise_id = st.session_state.pop("carregar_analise_id")
@@ -911,6 +1067,16 @@ if "visualizando_historico_id" in st.session_state and not pdf_file:
         "quantidade":  ", ".join(str(it.get("quantidade", "")) for it in itens) if itens else "—",
         "si":          ", ".join(str(it.get("si", "")) for it in itens) if itens else "—",
     }
+    
+    # Reconstruir 'res' (resultado da extração) para compatibilidade com código abaixo
+    res = {
+        "identificacao": identificacao,
+        "itens": itens,
+        "nota_credito": [nota_credito] if isinstance(nota_credito, dict) else (nota_credito if isinstance(nota_credito, list) else []),
+        "certidoes": {"sicaf": {}, "cadin": {}, "consulta_consolidada": {}},  # Simplificado
+        "validacoes_contrato": _dc.get("validacoes_contrato", []),
+        "contrato": _dc.get("contrato", {}),
+    }
 
 # ══════════════════════════════════════════════════════════════════════
 # MODO NORMAL — Processar PDF
@@ -940,34 +1106,79 @@ if not _modo_historico:
         "resultado_extracao" not in st.session_state
         or st.session_state.get("ultimo_pdf_id") != _pdf_id
     ):
+        # Container para feedback visual
+        status_container = st.container()
+        with status_container:
+            st.info("🔄 **Processando PDF...** Por favor, aguarde.")
         progress_bar = st.progress(0)
+        status_text = st.empty()
 
-        # Etapa 1 — extração real do PDF
-        progress_bar.progress(0.15, text="Lendo e extraindo dados do PDF...")
-        resultado_extracao = _processar_pdf(pdf_file)
+        try:
+            # Etapa 1 — extração real do PDF
+            status_text.markdown("📄 **Etapa 1/4:** Lendo e extraindo dados do PDF...")
+            progress_bar.progress(0.10)
+            resultado_extracao = _processar_pdf(pdf_file)
 
-        # Verificar se extração retornou dados
-        ident_check = resultado_extracao.get("identificacao", {})
-        if not ident_check.get("nup") and not ident_check.get("om"):
-            print(f"[AVISO] Extração retornou dados vazios para '{pdf_file.name}'")
+            # Verificar se extração retornou dados
+            ident_check = resultado_extracao.get("identificacao", {})
+            if not ident_check.get("nup") and not ident_check.get("om"):
+                st.warning(
+                    f"⚠️ **Atenção:** A extração retornou poucos dados para '{pdf_file.name}'. "
+                    "Verifique se o PDF está completo e legível."
+                )
 
-        # Etapas seguintes
-        progress_bar.progress(0.50, text="Validando requisição...")
-        time.sleep(0.2)
-        progress_bar.progress(0.75, text="Verificando certidões...")
-        time.sleep(0.2)
-        progress_bar.progress(1.00, text="Gerando resultado...")
-        time.sleep(0.2)
-        progress_bar.empty()
+            # Etapa 2 — validação da requisição
+            status_text.markdown("✅ **Etapa 2/4:** Validando requisição e itens...")
+            progress_bar.progress(0.40)
+            time.sleep(0.1)
 
-        st.session_state.resultado_extracao = resultado_extracao
-        st.session_state.pdf_processado     = True
-        st.session_state.ultimo_pdf         = pdf_file.name
-        st.session_state.ultimo_pdf_id      = _pdf_id
+            # Etapa 3 — verificação de certidões
+            status_text.markdown("🔍 **Etapa 3/4:** Verificando certidões e NC...")
+            progress_bar.progress(0.70)
+            time.sleep(0.1)
 
-        # ── Registrar pregão/contrato no banco (automático) ─────────
-        _registrar_pregao_automatico(resultado_extracao)
-        _registrar_contrato_automatico(resultado_extracao)
+            # Etapa 4 — geração de resultado
+            status_text.markdown("📊 **Etapa 4/4:** Gerando resultado final...")
+            progress_bar.progress(0.90)
+            time.sleep(0.1)
+
+            progress_bar.progress(1.00)
+            status_text.markdown("✅ **Processamento concluído!**")
+            time.sleep(0.3)
+
+            # Limpar feedback
+            progress_bar.empty()
+            status_text.empty()
+            status_container.empty()
+
+            st.session_state.resultado_extracao = resultado_extracao
+            st.session_state.pdf_processado     = True
+            st.session_state.ultimo_pdf         = pdf_file.name
+            st.session_state.ultimo_pdf_id      = _pdf_id
+
+            # ── Registrar pregão/contrato no banco (automático) ─────────
+            try:
+                _registrar_pregao_automatico(resultado_extracao)
+                _registrar_contrato_automatico(resultado_extracao)
+            except Exception as e:
+                print(f"[AVISO] Erro ao registrar no banco: {e}")
+
+        except Exception as e:
+            # Limpar feedback em caso de erro
+            progress_bar.empty()
+            status_text.empty()
+            status_container.empty()
+            
+            # Mensagem de erro mais clara
+            st.error(
+                f"❌ **Erro ao processar o PDF:**\n\n"
+                f"**Detalhes:** {str(e)}\n\n"
+                f"**Sugestões:**\n"
+                f"- Verifique se o arquivo não está corrompido\n"
+                f"- Tente abrir o PDF em outro leitor para confirmar que está íntegro\n"
+                f"- Se o erro persistir, entre em contato com o suporte"
+            )
+            st.stop()
 
     # ── Adaptar dados reais do extrator ─────────────────────────────
     res = st.session_state.get("resultado_extracao", {})
@@ -983,19 +1194,33 @@ if not _modo_historico:
     certidoes = _adaptar_certidoes(res)
 
     # ── Resultado da análise — validator (passo 4) ──────────────────
-    resultado = validator.validar_processo(
-        res, validacoes_req, validacoes_nc, certidoes, analise_sem_nc
-    )
+    # No modo histórico, usar res já reconstruído; no modo normal, usar res do processamento
+    if not _modo_historico:
+        resultado = validator.validar_processo(
+            res, validacoes_req, validacoes_nc, certidoes, analise_sem_nc
+        )
 
-    # ── Máscara da NE (ne_generator — passo 5) ──────────────────────
-    mascara = ne_generator.gerar_mascara(res)
+        # ── Máscara da NE (ne_generator — passo 5) ──────────────────────
+        mascara = ne_generator.gerar_mascara(res)
 
-    # ── Comparação de máscaras (sistema vs requisitante) ─────────────
-    mascara_requisitante = res.get("identificacao", {}).get("mascara_requisitante")
-    divergencias_mascara = ne_generator.comparar_mascaras(mascara, mascara_requisitante)
+        # ── Comparação de máscaras (sistema vs requisitante) ─────────────
+        mascara_requisitante = res.get("identificacao", {}).get("mascara_requisitante")
+        divergencias_mascara = ne_generator.comparar_mascaras(mascara, mascara_requisitante)
 
-    # ── Despacho (despacho_generator — passo 6) ─────────────────────
-    despacho = despacho_generator.gerar_despacho(resultado)
+        # ── Despacho (despacho_generator — passo 6) ─────────────────────
+        despacho = despacho_generator.gerar_despacho(resultado)
+    else:
+        # Modo histórico: resultado, máscara e despacho já foram salvos
+        # mascara, despacho e divergencias_mascara já foram carregados acima
+        pass
+
+# ── Garantir que 'res' esteja sempre definido ────────────────────────
+if "_modo_historico" in locals() and _modo_historico:
+    # No modo histórico, res já foi criado acima
+    pass
+elif "res" not in locals():
+    # Fallback: criar res vazio se não foi definido
+    res = {}
 
 
 # ── Ícones dinâmicos de status dos estágios ─────────────────────────
@@ -1018,10 +1243,10 @@ _tem_ressalva_nc = any(
     if isinstance(v, dict)
 )
 
-# Validações de contrato
-_vals_contrato = res.get("validacoes_contrato", [])
-_tem_bloqueio_contrato = any(v.get("status") == "vermelho" for v in _vals_contrato)
-_tem_ressalva_contrato = any(v.get("status") == "amarelo" for v in _vals_contrato)
+# Validações de contrato (proteger contra res não definido)
+_vals_contrato = res.get("validacoes_contrato", []) if "res" in locals() and res else []
+_tem_bloqueio_contrato = any(v.get("status") == "vermelho" for v in _vals_contrato) if _vals_contrato else False
+_tem_ressalva_contrato = any(v.get("status") == "amarelo" for v in _vals_contrato) if _vals_contrato else False
 
 if _tem_bloqueio_cert or _tem_bloqueio_contrato:
     icone_e3 = "🔴"
@@ -1040,6 +1265,7 @@ icone_e4 = {"approval": "🟢", "caveat": "⚠️", "rejection": "🔴"}.get(
 # ══════════════════════════════════════════════════════════════════════
 with st.expander("🟢 ESTÁGIO 1 — IDENTIFICAÇÃO", expanded=True):
     components.render_identificacao(identificacao)
+    st.markdown("")  # Espaçamento inferior
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1077,10 +1303,9 @@ with st.expander(f"{icone_e2} ESTÁGIO 2 — REQUISIÇÃO E ITENS", expanded=Tru
         )
 
     st.markdown("**Verificações:**")
-    for val in validacoes_req.values():
-        st.markdown(val["resultado"])
+    components.render_verificacoes_req(validacoes_req)
 
-    # ── Simulação ComprasNet (campos lado a lado) ──
+    # ── Simulação ComprasNet (campos essenciais) ──
     st.markdown("---")
     st.markdown("##### Dados para Simulação ComprasNet")
 
@@ -1088,10 +1313,7 @@ with st.expander(f"{icone_e2} ESTÁGIO 2 — REQUISIÇÃO E ITENS", expanded=Tru
         ("UASG",        simulacao.get("uasg", "—")),
         ("Instrumento", simulacao.get("instrumento", "—")),
         ("CNPJ",        simulacao.get("cnpj", "—")),
-        ("Item(ns)",    simulacao.get("item", "—")),
         ("PI",          simulacao.get("pi", "—")),
-        ("Quantidade",  simulacao.get("quantidade", "—")),
-        ("SI",          simulacao.get("si", "—")),
     ]
 
     html_sim = '<div class="simulacao-grid">'
@@ -1126,8 +1348,8 @@ with st.expander(f"{icone_e3} ESTÁGIO 3 — NC E CERTIDÕES", expanded=True):
     components.render_certidoes_table(certidoes)
 
     # ── Validações do Contrato (se processo for de contrato) ──
-    validacoes_contrato = res.get("validacoes_contrato", [])
-    dados_contrato = res.get("contrato", {})
+    validacoes_contrato = res.get("validacoes_contrato", []) if "res" in locals() and res else []
+    dados_contrato = res.get("contrato", {}) if "res" in locals() and res else {}
     if validacoes_contrato or dados_contrato:
         st.markdown("---")
         st.markdown("##### Contrato")
@@ -1272,7 +1494,14 @@ with st.expander(f"{icone_e4} ESTÁGIO 4 — DECISÃO E OUTPUTS", expanded=True)
                     time.sleep(0.5)
                     st.rerun()  # Atualizar sidebar com novo histórico
                 except Exception as e:
-                    st.error(f"❌ Erro ao salvar: {e}")
+                    st.error(
+                        f"❌ **Erro ao salvar análise:**\n\n"
+                        f"**Detalhes:** {str(e)}\n\n"
+                        f"**Sugestões:**\n"
+                        f"- Verifique se o banco de dados está acessível\n"
+                        f"- Tente salvar novamente\n"
+                        f"- Se o erro persistir, verifique os logs do sistema"
+                    )
     else:
         # Modo histórico: mostrar observações e botão para voltar
         st.markdown("---")
@@ -1285,7 +1514,6 @@ with st.expander(f"{icone_e4} ESTÁGIO 4 — DECISÃO E OUTPUTS", expanded=True)
             st.session_state.pop("dados_historico", None)
             st.rerun()
 
-
-# ── Rodapé ──────────────────────────────────────────────────────────
-st.markdown("---")
-st.caption("Análise concluída • SAL/CAF — Cmdo 9º Gpt Log")
+    # ── Rodapé ──────────────────────────────────────────────────────────
+    st.markdown("---")
+    st.caption("Análise concluída • SAL/CAF — Cmdo 9º Gpt Log")

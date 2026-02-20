@@ -6,14 +6,21 @@ As datas de certidões e NC são calculadas dinamicamente com base
 na data atual para demonstrar corretamente os status.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone, timedelta
+
+# ── Configuração de fuso horário (Campo Grande-MS: GMT-4) ──────────────
+TZ_CAMPO_GRANDE = timezone(timedelta(hours=-4))
+
+def hoje_cg() -> date:
+    """Retorna a data de hoje no fuso horário de Campo Grande (GMT-4)."""
+    return datetime.now(TZ_CAMPO_GRANDE).date()
 
 
 def _dias_ate(data_str: str) -> int:
     """Calcula dias entre hoje e uma data no formato DD/MM/YYYY."""
     try:
         dt = datetime.strptime(data_str, "%d/%m/%Y").date()
-        return (dt - date.today()).days
+        return (dt - hoje_cg()).days
     except ValueError:
         return 0
 

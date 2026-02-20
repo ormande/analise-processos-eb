@@ -356,6 +356,127 @@ def contar_analises() -> int:
     return total
 
 
+def buscar_analises(
+    busca: Optional[str] = None,
+    resultado_filtro: Optional[str] = None,
+    data_inicio: Optional[str] = None,
+    data_fim: Optional[str] = None,
+    limite: int = 100,
+) -> list[dict]:
+    """
+    Busca análises com filtros opcionais.
+    
+    Parâmetros:
+        busca: Busca em NUP, OM, fornecedor ou CNPJ
+        resultado_filtro: 'approval', 'caveat' ou 'rejection'
+        data_inicio: Data no formato 'YYYY-MM-DD'
+        data_fim: Data no formato 'YYYY-MM-DD'
+        limite: Número máximo de resultados
+    
+    Retorna lista de dicts com os mesmos campos de listar_analises().
+    """
+    conn = get_connection()
+    conn.row_factory = sqlite3.Row
+    cursor = conn.cursor()
+    
+    query = """SELECT id, nup, data_analise, resultado, om_requisitante,
+                      fornecedor, cnpj, valor_total, tipo_processo, instrumento
+               FROM analises
+               WHERE 1=1"""
+    params = []
+    
+    # Filtro de busca (NUP, OM, fornecedor, CNPJ)
+    if busca:
+        busca_like = f"%{busca}%"
+        query += """ AND (nup LIKE ? OR om_requisitante LIKE ? 
+                     OR fornecedor LIKE ? OR cnpj LIKE ?)"""
+        params.extend([busca_like, busca_like, busca_like, busca_like])
+    
+    # Filtro de resultado
+    if resultado_filtro:
+        query += " AND resultado = ?"
+        params.append(resultado_filtro)
+    
+    # Filtro de data
+    if data_inicio:
+        query += " AND DATE(data_analise) >= ?"
+        params.append(data_inicio)
+    if data_fim:
+        query += " AND DATE(data_analise) <= ?"
+        params.append(data_fim)
+    
+    query += " ORDER BY data_analise DESC LIMIT ?"
+    params.append(limite)
+    
+    cursor.execute(query, params)
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def obter_estatisticas_analises() -> dict:
+    """
+    Retorna estatísticas agregadas das análises.
+    
+    Retorna dict com:
+        total: int
+        por_resultado: dict com contagens por tipo
+        por_mes: list de dicts com {mes, total, approval, caveat, rejection}
+        valor_total: float (soma de todos os valores)
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Total
+    cursor.execute("SELECT COUNT(*) FROM analises")
+    total = cursor.fetchone()[0]
+    
+    # Por resultado
+    cursor.execute("""
+        SELECT resultado, COUNT(*) as count
+        FROM analises
+        GROUP BY resultado
+    """)
+    por_resultado = {row[0]: row[1] for row in cursor.fetchall()}
+    
+    # Por mês (últimos 12 meses)
+    cursor.execute("""
+        SELECT 
+            strftime('%Y-%m', data_analise) as mes,
+            COUNT(*) as total,
+            SUM(CASE WHEN resultado = 'approval' THEN 1 ELSE 0 END) as approval,
+            SUM(CASE WHEN resultado = 'caveat' THEN 1 ELSE 0 END) as caveat,
+            SUM(CASE WHEN resultado = 'rejection' THEN 1 ELSE 0 END) as rejection
+        FROM analises
+        WHERE data_analise >= date('now', '-12 months')
+        GROUP BY mes
+        ORDER BY mes DESC
+    """)
+    por_mes = [
+        {
+            "mes": row[0],
+            "total": row[1],
+            "approval": row[2],
+            "caveat": row[3],
+            "rejection": row[4],
+        }
+        for row in cursor.fetchall()
+    ]
+    
+    # Valor total
+    cursor.execute("SELECT SUM(valor_total) FROM analises WHERE valor_total IS NOT NULL")
+    valor_total = cursor.fetchone()[0] or 0.0
+    
+    conn.close()
+    
+    return {
+        "total": total,
+        "por_resultado": por_resultado,
+        "por_mes": por_mes,
+        "valor_total": valor_total,
+    }
+
+
 # ══════════════════════════════════════════════════════════════════════
 # BASE DE PREGÕES (banco orgânico)
 # ══════════════════════════════════════════════════════════════════════
