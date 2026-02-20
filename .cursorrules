@@ -1,0 +1,111 @@
+# REGRAS DO PROJETO — Sistema de Análise de Processos Requisitórios
+
+## CONTEXTO
+Este é um sistema de análise automatizada de processos requisitórios de 
+licitação do Exército Brasileiro, usado pela SAL/CAF do Cmdo 9º Gpt Log 
+(Campo Grande/MS). O sistema extrai dados de PDFs compilados, valida 
+conforme Lei 14.133/2021, e gera máscaras de NE + rascunhos de despacho.
+
+## STACK
+- Python 3.11+
+- Streamlit (interface)
+- pdfplumber (extração de texto de PDF)
+- Tesseract/pytesseract (OCR para NCs em imagem)
+- SQLite (banco local)
+- Regex (extração de padrões)
+
+## ESTRUTURA DO PROJETO
+```
+projeto_limpo/
+├── app.py                      # App principal Streamlit
+├── modules/
+│   ├── components.py           # Componentes de UI reutilizáveis
+│   ├── mock_data.py            # Dados mock (será substituído)
+│   ├── database.py             # Schema e operações SQLite
+│   ├── extractor.py            # [A CRIAR] Extração de dados do PDF
+│   ├── validator.py            # [A CRIAR] Validações e regras de negócio
+│   ├── ne_generator.py         # [A CRIAR] Gerador de máscara da NE
+│   └── despacho_generator.py   # [A CRIAR] Gerador de texto de despacho
+├── docs/                       # Documentação de referência
+│   ├── MAPEAMENTO_PADROES_PROCESSOS_v2.md
+│   ├── ESPECIFICACAO_LOGICA_NEGOCIO_v2.md
+│   └── PROMPT_BOLT_INTERFACE.md
+├── tests/                      # PDFs de teste
+│   ├── Processo65345_000389_202685.pdf
+│   ├── Processo64136_000430_202616.pdf
+│   └── Processo65297_001232_202690.pdf
+├── data/                       # Banco SQLite (gitignored)
+├── assets/styles.css           # CSS customizado
+└── requirements.txt
+```
+
+## DOCUMENTAÇÃO OBRIGATÓRIA
+Antes de implementar qualquer módulo, LEIA os arquivos em docs/:
+- `MAPEAMENTO_PADROES_PROCESSOS_v2.md` — contém TODOS os padrões regex, 
+  formatos de data, estrutura das NCs, exemplos reais
+- `ESPECIFICACAO_LOGICA_NEGOCIO_v2.md` — contém o fluxo completo do 
+  analista, regras de severidade, templates de máscara e despacho
+
+## REGRAS DE DESENVOLVIMENTO
+
+### Linguagem
+- Todo código, comentários e docstrings em PORTUGUÊS BRASILEIRO
+- Usar terminologia militar quando apropriado (OM, NE, NC, UASG, OD, etc.)
+- Interface 100% em português
+
+### Princípio fundamental
+O sistema é ferramenta de APOIO ao analista. Ele NUNCA reprova automaticamente.
+- Divergências na tabela de itens (cálculo, ND, SI) → ⚠️ AMARELO (sinalizar)
+- Prazo de NC vencido → ⚠️ AMARELO (sinalizar, não bloquear)
+- Certidão vencida → 🔴 VERMELHO (sinalizar como provável reprovação)
+- CNPJ divergente → 🔴 VERMELHO (sinalizar como provável reprovação)
+- A decisão final é SEMPRE do analista humano
+
+### Severidades (3 níveis)
+- 🟢 VERDE — conforme, nenhuma ação
+- ⚠️ AMARELO — sinalização, analista decide
+- 🔴 VERMELHO — bloqueio provável, analista investiga
+
+### Padrões de código
+- Funções pequenas e focadas (max ~50 linhas)
+- Docstrings em todas as funções públicas
+- Type hints quando possível
+- Tratamento de erro robusto (PDFs são imprevisíveis)
+- Logs com print() por enquanto (logging virá depois)
+
+### Extração de PDF
+- Usar pdfplumber como primeira opção
+- Se página não tem texto extraível → fallback para Tesseract OCR
+- Regex deve ser testado contra os 3 processos em tests/
+- Formatos de data aceitos: DD/MM/YYYY, DDMMMYY, DD MMM YY, DD/MMM/YYYY
+- Formatos de NC: 2026NC000xxx, 2026NC400xxx
+
+### Banco de dados
+- SQLite local, arquivo em data/analise_processos.db
+- UASGs novas encontradas em processos → salvar automaticamente
+- Tabela nd_subelementos → pré-carregar da planilha Excel
+
+### Interface Streamlit
+- Já está funcional com dados mock
+- Próximo passo: substituir chamadas a mock_data por dados reais
+- Manter os 4 estágios: Identificação, Requisição, NC/Certidões, Decisão
+- Botão "Análise sem NC?" deve pular validações da NC
+
+### Máscara da NE
+- Templates variam por tipo (licitação, contrato, dispensa)
+- Só incluir campos que existem na NC (se não tem PTRES, não incluir)
+- Formato real varia — seguir exemplos do NOVO_MODELO_CAMPO_DESCRICAO_NE.docx
+- Siglas de OM em MAIÚSCULAS e abreviadas
+
+### Despacho
+- Só gerar para ressalva e reprovação (aprovação = encaminhamento, sem despacho)
+- Sempre começa com "Informo que..."
+- Sem cabeçalho, sem assinatura — só o corpo do texto
+- Caixa de texto editável na interface
+
+## UASGs MAIS USADAS
+- 160136 — 9º Gpt Log
+- 160141 — CRO/9
+- 160142 — 9º B Sup
+- 160143 — H Mil A CG
+- 160078 — CMCG

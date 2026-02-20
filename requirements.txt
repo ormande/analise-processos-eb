@@ -1,0 +1,8 @@
+streamlit>=1.38.0
+pandas>=2.1.0
+pdfplumber>=0.10.0
+openpyxl>=3.1.0
+# OCR (requer Tesseract instalado no sistema)
+pytesseract>=0.3.10
+PyMuPDF>=1.24.0
+Pillow>=10.0.0
