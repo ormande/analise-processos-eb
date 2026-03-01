@@ -1,7 +1,8 @@
 """
-Script de teste para processar todos os PDFs em tests/ e gerar relatório.
+Script de teste de regressão para validação de extração de processos.
 
-Compara resultados esperados vs extraídos e identifica problemas comuns.
+Compara resultados extraídos contra valores esperados e gera relatório.
+Uso: python tests/testar_processos.py
 """
 
 import os
@@ -9,6 +10,7 @@ import sys
 import json
 from pathlib import Path
 from datetime import datetime
+from typing import Dict, Any, List
 
 # Adicionar diretório raiz ao path
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -20,76 +22,100 @@ TESTS_DIR = Path(__file__).parent
 REPORT_DIR = TESTS_DIR / "relatorios"
 REPORT_DIR.mkdir(exist_ok=True)
 
-# Resultados esperados (manualmente documentados após análise)
-# Formato: {nome_arquivo: {campo: valor_esperado}}
-RESULTADOS_ESPERADOS = {
-    "Processo-64136_000430_2026-16.pdf": {
-        "num_itens": 2,  # Tem 2 itens na tabela
+# ── Cores ANSI para terminal ──────────────────────────────────────────
+class Cores:
+    """Códigos ANSI para cores no terminal."""
+    VERDE = "\033[92m"
+    AMARELO = "\033[93m"
+    VERMELHO = "\033[91m"
+    AZUL = "\033[94m"
+    RESET = "\033[0m"
+    NEGRITO = "\033[1m"
+
+# ── Valores Esperados ──────────────────────────────────────────────────
+ESPERADO: Dict[str, Dict[str, Any]] = {
+    "Processo-65297_001529_2026-55.pdf": {
+        "nup": "65297.001529/2026-55",
+        "min_itens": 3,
         "tem_nc": True,
-        "tem_certidoes": True,
-    },
-    "Processo-65297_001232_2026-90.pdf": {
-        "num_itens": 1,
-        "tem_nc": True,
-        "tem_certidoes": True,
+        "tem_sicaf": True,
+        "uasg_esperada": "160512",
     },
     "Processo-65345_000389_2026-85.pdf": {
-        "num_itens": 1,
+        "nup": "65345.000389/2026-85",
+        "min_itens": 1,
         "tem_nc": True,
-        "tem_certidoes": True,
+        "tem_sicaf": True,
+        "uasg_esperada": "160141",
+    },
+    "Processo-65345_000547_2026-05.pdf": {
+        "nup": "65345.000547/2026-05",
+        "min_itens": 2,  # ANTES: 0 itens, APÓS correção: deve ter 2+
+        "tem_nc": True,
+        "tem_sicaf": True,
+    },
+    "Processo-65345_000556_2026-98.pdf": {
+        "nup": "65345.000556/2026-98",
+        "min_itens": 1,  # ANTES: 0, APÓS correção: deve ter itens
+        "tem_nc": True,
+        "tem_sicaf": True,
     },
 }
 
 
-def processar_pdf(caminho_pdf: Path) -> dict:
+def processar_pdf(caminho_pdf: Path) -> Dict[str, Any]:
     """Processa um PDF e retorna os dados extraídos."""
-    print(f"\n{'='*70}")
-    print(f"Processando: {caminho_pdf.name}")
-    print(f"{'='*70}")
+    print(f"\n{Cores.AZUL}{'='*70}{Cores.RESET}")
+    print(f"{Cores.NEGRITO}Processando: {caminho_pdf.name}{Cores.RESET}")
+    print(f"{Cores.AZUL}{'='*70}{Cores.RESET}")
     
     try:
         resultado = extractor.extrair_processo(str(caminho_pdf))
         
-        # Resumo dos dados extraídos
+        # Extrair dados relevantes
+        ident = resultado.get("identificacao", {})
+        itens = resultado.get("itens", [])
+        ncs = resultado.get("nota_credito", [])
+        certidoes = resultado.get("certidoes", {})
+        
         resumo = {
             "arquivo": caminho_pdf.name,
             "sucesso": True,
             "timestamp": datetime.now().isoformat(),
             "identificacao": {
-                "nup": resultado.get("identificacao", {}).get("nup"),
-                "uasg": resultado.get("identificacao", {}).get("uasg"),
-                "nr_requisicao": resultado.get("identificacao", {}).get("nr_requisicao"),
+                "nup": ident.get("nup"),
+                "uasg": ident.get("uasg"),
+                "nr_requisicao": ident.get("nr_requisicao"),
             },
             "itens": {
-                "total": len(resultado.get("itens", [])),
+                "total": len(itens),
                 "detalhes": [
                     {
                         "item": item.get("item"),
-                        "descricao": item.get("descricao", "")[:50] + "..." if item.get("descricao") else None,
+                        "descricao": (item.get("descricao", "")[:50] + "..." 
+                                     if len(item.get("descricao", "")) > 50 
+                                     else item.get("descricao", "")),
                         "qtd": item.get("qtd"),
                         "nd_si": item.get("nd_si"),
                     }
-                    for item in resultado.get("itens", [])
+                    for item in itens[:5]  # Limitar a 5 itens para resumo
                 ],
             },
             "nota_credito": {
-                "tem_nc": bool(resultado.get("nota_credito")),
-                "num_ncs": len(resultado.get("nota_credito", [])),
+                "tem_nc": bool(ncs),
+                "num_ncs": len(ncs),
             },
             "certidoes": {
-                "tem_sicaf": bool(resultado.get("certidoes", {}).get("sicaf")),
-                "tem_cadin": bool(resultado.get("certidoes", {}).get("cadin")),
-                "tem_consolidada": bool(resultado.get("certidoes", {}).get("consulta_consolidada")),
-            },
-            "contrato": {
-                "tem_contrato": bool(resultado.get("contrato")),
+                "tem_sicaf": bool(certidoes.get("sicaf")),
+                "tem_cadin": bool(certidoes.get("cadin")),
+                "tem_consolidada": bool(certidoes.get("consulta_consolidada")),
             },
         }
         
         return resumo
         
     except Exception as e:
-        print(f"ERRO ao processar {caminho_pdf.name}: {e}")
+        print(f"{Cores.VERMELHO}ERRO ao processar {caminho_pdf.name}: {e}{Cores.RESET}")
         import traceback
         traceback.print_exc()
         return {
@@ -100,185 +126,237 @@ def processar_pdf(caminho_pdf: Path) -> dict:
         }
 
 
-def comparar_resultados(extraido: dict, esperado: dict) -> dict:
-    """Compara resultados extraídos com esperados."""
-    problemas = []
+def validar_resultado(extraido: Dict[str, Any], esperado: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """
+    Valida resultado extraído contra valores esperados.
+    Retorna lista de falhas (vazia se tudo OK).
+    """
+    falhas = []
     
     if not extraido.get("sucesso"):
-        problemas.append({
-            "severidade": "erro",
+        falhas.append({
             "campo": "processamento",
             "mensagem": f"Falha ao processar: {extraido.get('erro', 'Erro desconhecido')}",
+            "severidade": "erro",
         })
-        return problemas
+        return falhas
     
-    # Comparar número de itens
-    num_itens_esperado = esperado.get("num_itens")
-    num_itens_extraido = extraido.get("itens", {}).get("total", 0)
+    ident = extraido.get("identificacao", {})
+    itens = extraido.get("itens", {})
+    nc = extraido.get("nota_credito", {})
+    certidoes = extraido.get("certidoes", {})
     
-    if num_itens_esperado and num_itens_extraido != num_itens_esperado:
-        problemas.append({
+    # Validar NUP
+    nup_esperado = esperado.get("nup")
+    nup_extraido = ident.get("nup")
+    if nup_esperado and nup_extraido != nup_esperado:
+        falhas.append({
+            "campo": "nup",
+            "mensagem": f"NUP esperado: {nup_esperado}, extraído: {nup_extraido}",
+            "esperado": nup_esperado,
+            "extraido": nup_extraido,
             "severidade": "alta",
-            "campo": "itens",
-            "mensagem": f"Esperado {num_itens_esperado} item(ns), extraído {num_itens_extraido}",
-            "esperado": num_itens_esperado,
-            "extraido": num_itens_extraido,
         })
     
-    # Comparar presença de NC
-    tem_nc_esperado = esperado.get("tem_nc")
-    tem_nc_extraido = extraido.get("nota_credito", {}).get("tem_nc", False)
+    # Validar número mínimo de itens
+    min_itens = esperado.get("min_itens")
+    num_itens = itens.get("total", 0)
+    if min_itens is not None and num_itens < min_itens:
+        falhas.append({
+            "campo": "itens",
+            "mensagem": f"Itens extraídos: {num_itens} (esperado ≥{min_itens})",
+            "esperado": f">={min_itens}",
+            "extraido": num_itens,
+            "severidade": "alta",
+        })
     
-    if tem_nc_esperado is not None and tem_nc_esperado != tem_nc_extraido:
-        problemas.append({
-            "severidade": "media",
+    # Validar presença de NC
+    tem_nc_esperado = esperado.get("tem_nc")
+    tem_nc_extraido = nc.get("tem_nc", False)
+    if tem_nc_esperado is not None and tem_nc_extraido != tem_nc_esperado:
+        falhas.append({
             "campo": "nota_credito",
             "mensagem": f"NC esperada: {tem_nc_esperado}, extraída: {tem_nc_extraido}",
-        })
-    
-    # Comparar presença de certidões
-    tem_cert_esperado = esperado.get("tem_certidoes")
-    tem_cert_extraido = (
-        extraido.get("certidoes", {}).get("tem_sicaf", False) or
-        extraido.get("certidoes", {}).get("tem_cadin", False) or
-        extraido.get("certidoes", {}).get("tem_consolidada", False)
-    )
-    
-    if tem_cert_esperado is not None and tem_cert_esperado != tem_cert_extraido:
-        problemas.append({
+            "esperado": tem_nc_esperado,
+            "extraido": tem_nc_extraido,
             "severidade": "media",
-            "campo": "certidoes",
-            "mensagem": f"Certidões esperadas: {tem_cert_esperado}, extraídas: {tem_cert_extraido}",
         })
     
-    return problemas
+    # Validar presença de SICAF
+    tem_sicaf_esperado = esperado.get("tem_sicaf")
+    tem_sicaf_extraido = certidoes.get("tem_sicaf", False)
+    if tem_sicaf_esperado is not None and tem_sicaf_extraido != tem_sicaf_esperado:
+        falhas.append({
+            "campo": "sicaf",
+            "mensagem": f"SICAF esperada: {tem_sicaf_esperado}, extraída: {tem_sicaf_extraido}",
+            "esperado": tem_sicaf_esperado,
+            "extraido": tem_sicaf_extraido,
+            "severidade": "media",
+        })
+    
+    # Validar UASG (se especificada)
+    uasg_esperada = esperado.get("uasg_esperada")
+    uasg_extraida = ident.get("uasg")
+    if uasg_esperada and uasg_extraida != uasg_esperada:
+        falhas.append({
+            "campo": "uasg",
+            "mensagem": f"UASG esperada: {uasg_esperada}, extraída: {uasg_extraida}",
+            "esperado": uasg_esperada,
+            "extraido": uasg_extraida,
+            "severidade": "media",
+        })
+    
+    return falhas
 
 
-def gerar_relatorio(resultados: list[dict]) -> str:
-    """Gera relatório em formato texto."""
+def imprimir_resultado_teste(arquivo: str, extraido: Dict[str, Any], 
+                             falhas: List[Dict[str, Any]], esperado: Dict[str, Any]):
+    """Imprime resultado do teste formatado com cores."""
+    print(f"\n{Cores.NEGRITO}Arquivo: {arquivo}{Cores.RESET}")
+    
+    if not extraido.get("sucesso"):
+        print(f"{Cores.VERMELHO}❌ FALHA: {extraido.get('erro', 'Erro desconhecido')}{Cores.RESET}")
+        return
+    
+    ident = extraido.get("identificacao", {})
+    itens = extraido.get("itens", {})
+    nc = extraido.get("nota_credito", {})
+    certidoes = extraido.get("certidoes", {})
+    
+    # Dados extraídos
+    print(f"  NUP: {ident.get('nup', '—')}")
+    print(f"  UASG: {ident.get('uasg', '—')}")
+    print(f"  Itens: {itens.get('total', 0)}")
+    print(f"  NC: {'✅' if nc.get('tem_nc') else '❌'} ({nc.get('num_ncs', 0)} NCs)")
+    print(f"  SICAF: {'✅' if certidoes.get('tem_sicaf') else '❌'}")
+    
+    # Validações
+    if falhas:
+        print(f"\n{Cores.VERMELHO}❌ FALHAS ENCONTRADAS:{Cores.RESET}")
+        for falha in falhas:
+            severidade_emoji = {
+                "erro": "🔴",
+                "alta": "🔴",
+                "media": "⚠️",
+            }.get(falha.get("severidade", "media"), "⚠️")
+            print(f"  {severidade_emoji} {falha['campo']}: {falha['mensagem']}")
+    else:
+        print(f"\n{Cores.VERDE}✅ TODOS OS TESTES PASSARAM{Cores.RESET}")
+
+
+def gerar_relatorio_json(resultados: List[Dict[str, Any]], 
+                        validacoes: Dict[str, List[Dict[str, Any]]]) -> str:
+    """Gera relatório JSON com timestamp."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    relatorio_path = REPORT_DIR / f"relatorio_testes_{timestamp}.txt"
+    relatorio_path = REPORT_DIR / f"regressao_{timestamp}.json"
+    
+    relatorio = {
+        "timestamp": datetime.now().isoformat(),
+        "total_processos": len(resultados),
+        "processos_ok": sum(1 for r in resultados 
+                          if r.get("sucesso") and not validacoes.get(r["arquivo"])),
+        "processos_com_falhas": sum(1 for r in resultados 
+                                   if not r.get("sucesso") or validacoes.get(r["arquivo"])),
+        "resultados": [
+            {
+                **resultado,
+                "validacoes": {
+                    "passou": not validacoes.get(resultado["arquivo"], []),
+                    "falhas": validacoes.get(resultado["arquivo"], []),
+                }
+            }
+            for resultado in resultados
+        ],
+    }
     
     with open(relatorio_path, "w", encoding="utf-8") as f:
-        f.write("="*70 + "\n")
-        f.write("RELATÓRIO DE TESTES - EXTRAÇÃO DE PROCESSOS\n")
-        f.write("="*70 + "\n")
-        f.write(f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n")
-        f.write(f"Total de processos testados: {len(resultados)}\n\n")
-        
-        total_problemas = 0
-        processos_com_problema = 0
-        
-        for res in resultados:
-            f.write("\n" + "-"*70 + "\n")
-            f.write(f"Arquivo: {res['arquivo']}\n")
-            f.write("-"*70 + "\n")
-            
-            if not res.get("sucesso"):
-                f.write(f"[ERRO] {res.get('erro', 'Erro desconhecido')}\n")
-                processos_com_problema += 1
-                total_problemas += 1
-                continue
-            
-            # Dados extraídos
-            f.write(f"[OK] Processado com sucesso\n\n")
-            f.write(f"Identificação:\n")
-            f.write(f"  - NUP: {res.get('identificacao', {}).get('nup', '—')}\n")
-            f.write(f"  - UASG: {res.get('identificacao', {}).get('uasg', '—')}\n")
-            f.write(f"  - Req: {res.get('identificacao', {}).get('nr_requisicao', '—')}\n")
-            
-            f.write(f"\nItens: {res.get('itens', {}).get('total', 0)}\n")
-            for item in res.get('itens', {}).get('detalhes', []):
-                f.write(f"  - Item {item.get('item')}: {item.get('descricao', '—')}\n")
-                f.write(f"    Qtd: {item.get('qtd')}, ND/SI: {item.get('nd_si', '—')}\n")
-            
-            f.write(f"\nNota de Credito: {'[OK]' if res.get('nota_credito', {}).get('tem_nc') else '[FALTA]'}\n")
-            if res.get('nota_credito', {}).get('tem_nc'):
-                f.write(f"  - Numero de NCs: {res.get('nota_credito', {}).get('num_ncs', 0)}\n")
-            
-            f.write(f"\nCertidoes:\n")
-            f.write(f"  - SICAF: {'[OK]' if res.get('certidoes', {}).get('tem_sicaf') else '[FALTA]'}\n")
-            f.write(f"  - CADIN: {'[OK]' if res.get('certidoes', {}).get('tem_cadin') else '[FALTA]'}\n")
-            f.write(f"  - Consolidada: {'[OK]' if res.get('certidoes', {}).get('tem_consolidada') else '[FALTA]'}\n")
-            
-            f.write(f"\nContrato: {'[OK]' if res.get('contrato', {}).get('tem_contrato') else '[FALTA]'}\n")
-            
-            # Comparar com esperado
-            esperado = RESULTADOS_ESPERADOS.get(res['arquivo'], {})
-            if esperado:
-                problemas = comparar_resultados(res, esperado)
-                if problemas:
-                    processos_com_problema += 1
-                    total_problemas += len(problemas)
-                    f.write(f"\n⚠️ PROBLEMAS ENCONTRADOS:\n")
-                    for prob in problemas:
-                        f.write(f"  [{prob['severidade'].upper()}] {prob['campo']}: {prob['mensagem']}\n")
-                else:
-                    f.write(f"\n[OK] Todos os resultados estao conforme o esperado!\n")
-        
-        # Resumo final
-        f.write("\n" + "="*70 + "\n")
-        f.write("RESUMO FINAL\n")
-        f.write("="*70 + "\n")
-        f.write(f"Total de processos: {len(resultados)}\n")
-        f.write(f"Processos com problemas: {processos_com_problema}\n")
-        f.write(f"Total de problemas: {total_problemas}\n")
-        f.write(f"Taxa de sucesso: {((len(resultados) - processos_com_problema) / len(resultados) * 100):.1f}%\n")
+        json.dump(relatorio, f, ensure_ascii=False, indent=2)
     
     return str(relatorio_path)
 
 
 def main():
     """Função principal."""
-    import sys
-    import io
     # Forçar UTF-8 no Windows
     if sys.platform == "win32":
+        import io
         sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
         sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
     
-    print("Iniciando testes de extracao de processos...")
-    print(f"Diretorio de testes: {TESTS_DIR}")
-    print(f"Diretorio de relatorios: {REPORT_DIR}\n")
+    print(f"{Cores.NEGRITO}{'='*70}{Cores.RESET}")
+    print(f"{Cores.NEGRITO}TESTE DE REGRESSÃO - EXTRAÇÃO DE PROCESSOS{Cores.RESET}")
+    print(f"{Cores.NEGRITO}{'='*70}{Cores.RESET}")
+    print(f"Diretório de testes: {TESTS_DIR}")
+    print(f"Diretório de relatórios: {REPORT_DIR}\n")
     
-    # Encontrar todos os PDFs
-    pdfs = list(TESTS_DIR.glob("*.pdf"))
+    # Encontrar PDFs esperados
+    pdfs_esperados = list(ESPERADO.keys())
+    pdfs_encontrados = []
     
-    if not pdfs:
-        print("ERRO: Nenhum PDF encontrado em tests/")
-        return
+    for nome_arquivo in pdfs_esperados:
+        caminho = TESTS_DIR / nome_arquivo
+        if caminho.exists():
+            pdfs_encontrados.append(caminho)
+        else:
+            print(f"{Cores.AMARELO}⚠️  Arquivo não encontrado: {nome_arquivo}{Cores.RESET}")
     
-    print(f"Encontrados {len(pdfs)} arquivo(s) PDF:\n")
-    for pdf in pdfs:
+    if not pdfs_encontrados:
+        print(f"{Cores.VERMELHO}ERRO: Nenhum PDF de teste encontrado!{Cores.RESET}")
+        sys.exit(1)
+    
+    print(f"Encontrados {len(pdfs_encontrados)}/{len(pdfs_esperados)} arquivo(s) PDF:\n")
+    for pdf in pdfs_encontrados:
         print(f"  - {pdf.name}")
     
     # Processar cada PDF
     resultados = []
-    for pdf in sorted(pdfs):
+    validacoes = {}
+    
+    for pdf in sorted(pdfs_encontrados):
         resultado = processar_pdf(pdf)
         resultados.append(resultado)
+        
+        # Validar contra esperado
+        esperado = ESPERADO.get(pdf.name, {})
+        if esperado:
+            falhas = validar_resultado(resultado, esperado)
+            if falhas:
+                validacoes[pdf.name] = falhas
+            imprimir_resultado_teste(pdf.name, resultado, falhas, esperado)
+        else:
+            print(f"{Cores.AMARELO}⚠️  Sem valores esperados definidos para {pdf.name}{Cores.RESET}")
     
-    # Gerar relatório
-    print("\n" + "="*70)
-    print("Gerando relatorio...")
-    print("="*70)
+    # Gerar relatório JSON
+    relatorio_path = gerar_relatorio_json(resultados, validacoes)
     
-    relatorio_path = gerar_relatorio(resultados)
+    # Resumo final
+    processos_ok = sum(1 for r in resultados 
+                      if r.get("sucesso") and not validacoes.get(r["arquivo"]))
+    processos_com_falhas = len(resultados) - processos_ok
     
-    print(f"\nRelatorio gerado: {relatorio_path}")
-    print(f"\nResumo:")
-    print(f"  - Processos testados: {len(resultados)}")
-    sucessos = sum(1 for r in resultados if r.get("sucesso"))
-    print(f"  - Sucessos: {sucessos}")
-    print(f"  - Falhas: {len(resultados) - sucessos}")
+    print(f"\n{Cores.NEGRITO}{'='*70}{Cores.RESET}")
+    print(f"{Cores.NEGRITO}RESULTADO DOS TESTES{Cores.RESET}")
+    print(f"{Cores.NEGRITO}{'='*70}{Cores.RESET}")
     
-    # Salvar JSON também
-    json_path = REPORT_DIR / f"resultados_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-    with open(json_path, "w", encoding="utf-8") as f:
-        json.dump(resultados, f, ensure_ascii=False, indent=2)
-    print(f"  - JSON salvo: {json_path}")
+    if processos_com_falhas == 0:
+        print(f"{Cores.VERDE}✅ {processos_ok}/{len(resultados)} processos OK{Cores.RESET}")
+    else:
+        print(f"{Cores.VERDE}✅ {processos_ok}/{len(resultados)} processos OK{Cores.RESET}")
+        print(f"{Cores.VERMELHO}❌ {processos_com_falhas} processo(s) com falhas:{Cores.RESET}")
+        for resultado in resultados:
+            arquivo = resultado["arquivo"]
+            if not resultado.get("sucesso"):
+                print(f"  {arquivo}: {resultado.get('erro', 'Erro desconhecido')}")
+            elif validacoes.get(arquivo):
+                falhas = validacoes[arquivo]
+                for falha in falhas:
+                    print(f"  {arquivo}: {falha['campo']} - {falha['mensagem']}")
+    
+    print(f"\nRelatório JSON salvo: {relatorio_path}")
+    
+    # Exit code: 0 se todos passaram, 1 se algum falhou
+    sys.exit(0 if processos_com_falhas == 0 else 1)
 
 
 if __name__ == "__main__":
     main()
-

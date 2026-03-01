@@ -382,9 +382,13 @@ def _fmt_ug(codigo: str | None, nome: str | None) -> str:
     return codigo or "—"
 
 
-def _adaptar_nc(res: dict) -> dict:
+def _adaptar_nc(res: dict) -> list[dict]:
     """
-    Retorna o card da NC para exibição na interface.
+    Retorna lista de cards das NCs para exibição na interface.
+    
+    Se houver múltiplas NCs no processo, retorna todas adaptadas.
+    Se houver apenas 1 NC, retorna lista com 1 item (mantém compatibilidade).
+    Se não houver NC real, retorna lista com 1 item de fallback.
 
     Prioridade:
     1. Dados reais extraídos do documento NC (passo 2 — implementado)
@@ -394,34 +398,93 @@ def _adaptar_nc(res: dict) -> dict:
     ident     = res.get("identificacao", {})
 
     if ncs_reais:
-        nc_real = ncs_reais[0]   # usar a primeira NC
+        # Adaptar todas as NCs reais
+        ncs_adaptadas = []
+        nd_req = ident.get("nd")  # ND da requisição para comparação
+        
+        for nc_real in ncs_reais:
+            dias = nc_real.get("dias_restantes")
+            # dias pode ser int (calculado) ou None (prazo não extraído)
+            dias_str = dias if dias is not None else "N/A"
 
-        dias = nc_real.get("dias_restantes")
-        # dias pode ser int (calculado) ou None (prazo não extraído)
-        dias_str = dias if dias is not None else "N/A"
+            # ── Selecionar ND que confere com a requisição ──
+            linhas_evento = nc_real.get("linhas_evento", [])
+            nd_selecionada = nc_real.get("nd") or "—"
+            nd_divergente = False
+            nota_multiplas_nds = ""
+            
+            if linhas_evento and nd_req:
+                # Extrair todas as NDs distintas das linhas de evento
+                nds_distintas = set()
+                for linha in linhas_evento:
+                    nd_linha = linha.get("nd")
+                    if nd_linha:
+                        nds_distintas.add(nd_linha)
+                
+                # Normalizar ND da requisição (remover pontos para comparação)
+                nd_req_norm = nd_req.replace(".", "")
+                
+                # Procurar ND que confere com a requisição
+                nd_conferente = None
+                for nd_linha in nds_distintas:
+                    nd_linha_norm = nd_linha.replace(".", "")
+                    if nd_linha_norm == nd_req_norm:
+                        nd_conferente = nd_linha
+                        break
+                
+                if nd_conferente:
+                    # Encontrou ND que confere: usar essa
+                    nd_selecionada = nd_conferente
+                    # Buscar linha de evento correspondente para pegar outros campos
+                    linha_conferente = next(
+                        (l for l in linhas_evento if l.get("nd") == nd_conferente),
+                        None
+                    )
+                    if linha_conferente:
+                        # Atualizar campos com dados da linha que confere
+                        nc_real = nc_real.copy()  # Não modificar original
+                        nc_real["nd"] = linha_conferente.get("nd")
+                        nc_real["ptres"] = linha_conferente.get("ptres")
+                        nc_real["fonte"] = linha_conferente.get("fonte")
+                        nc_real["ugr"] = linha_conferente.get("ugr")
+                        nc_real["pi"] = linha_conferente.get("pi")
+                        nc_real["esf"] = linha_conferente.get("esf")
+                        # Saldo da linha que confere
+                        nc_real["saldo"] = linha_conferente.get("valor")
+                else:
+                    # Nenhuma ND confere: usar primeira e sinalizar divergência
+                    nd_selecionada = nc_real.get("nd") or "—"
+                    nd_divergente = True
+                
+                # Nota se houver múltiplas NDs diferentes
+                if len(nds_distintas) > 1:
+                    nds_lista = sorted(nds_distintas)
+                    nota_multiplas_nds = f" (NC possui saldos em outras NDs: {', '.join(nds_lista)})"
 
-        return {
-            "numero":        nc_real.get("numero") or "—",
-            "data_emissao":  nc_real.get("data_emissao") or "—",
-            "ug_emitente":   _fmt_ug(nc_real.get("ug_emitente"),
-                                     nc_real.get("nome_emitente")),
-            "ug_favorecida": _fmt_ug(nc_real.get("ug_favorecida"),
-                                     nc_real.get("nome_favorecida")),
-            "nd":            nc_real.get("nd") or "—",
-            "ptres":         nc_real.get("ptres") or "—",
-            "fonte":         nc_real.get("fonte") or "—",
-            "ugr":           nc_real.get("ugr") or "—",
-            "pi":            nc_real.get("pi") or "—",
-            "esf":           nc_real.get("esf") or "—",
-            # saldo pode ser None quando não foi possível extrair
-            "saldo":         nc_real.get("saldo"),
-            "prazo_empenho": nc_real.get("prazo_empenho") or "—",
-            "dias_restantes": dias_str,
-        }
+            ncs_adaptadas.append({
+                "numero":        nc_real.get("numero") or "—",
+                "data_emissao":  nc_real.get("data_emissao") or "—",
+                "ug_emitente":   _fmt_ug(nc_real.get("ug_emitente"),
+                                         nc_real.get("nome_emitente")),
+                "ug_favorecida": _fmt_ug(nc_real.get("ug_favorecida"),
+                                         nc_real.get("nome_favorecida")),
+                "nd":            nd_selecionada + nota_multiplas_nds if nota_multiplas_nds else nd_selecionada,
+                "nd_divergente": nd_divergente,  # Flag para indicar divergência
+                "ptres":         nc_real.get("ptres") or "—",
+                "fonte":         nc_real.get("fonte") or "—",
+                "ugr":           nc_real.get("ugr") or "—",
+                "pi":            nc_real.get("pi") or "—",
+                "esf":           nc_real.get("esf") or "—",
+                # saldo pode ser None quando não foi possível extrair
+                "saldo":         nc_real.get("saldo"),
+                "prazo_empenho": nc_real.get("prazo_empenho") or "—",
+                "dias_restantes": dias_str,
+            })
+        return ncs_adaptadas
 
     # ── Fallback: construir NC a partir dos dados da requisição ──
     # (sem documento NC no PDF — campos financeiros vêm do texto da req)
-    return {
+    return [{
         "numero":        ident.get("nc") or "—",
         "data_emissao":  ident.get("data_nc") or "—",
         "ug_emitente":   ident.get("orgao_emissor_nc") or "—",
@@ -435,15 +498,16 @@ def _adaptar_nc(res: dict) -> dict:
         "saldo":         None,
         "prazo_empenho": "— (não extraído)",
         "dias_restantes": "N/A",
-    }
+    }]
 
 
-def _calcular_validacoes_nc(nota_credito: dict, itens: list, res: dict) -> list:
+def _calcular_validacoes_nc(notas_credito: list[dict], itens: list, res: dict) -> list:
     """
-    Calcula as validações cruzadas entre a NC e a Requisição:
-    1. ND da NC vs ND da Requisição
-    2. Saldo da NC vs Valor Total dos itens
-    3. Prazo de empenho vs data atual
+    Calcula as validações cruzadas entre as NCs e a Requisição.
+    Considera TODAS as NCs quando há múltiplas:
+    1. ND das NCs vs ND da Requisição (verifica se pelo menos uma confere)
+    2. Saldo total de todas as NCs vs Valor Total dos itens
+    3. Prazo de empenho mais próximo do vencimento (mais urgente)
 
     Retorna lista de dicts no formato esperado por render_validacoes_nc().
     Regras de severidade conforme ESPECIFICACAO_LOGICA_NEGOCIO_v2:
@@ -452,67 +516,127 @@ def _calcular_validacoes_nc(nota_credito: dict, itens: list, res: dict) -> list:
     validacoes = []
     ident = res.get("identificacao", {})
 
-    # ── Dados da NC ──
-    nd_nc     = nota_credito.get("nd")
-    saldo_nc  = nota_credito.get("saldo")
-    prazo_raw = nota_credito.get("prazo_empenho")
-    dias      = nota_credito.get("dias_restantes")
-
     # ── Dados da Requisição ──
     nd_req    = ident.get("nd")
     total_req = sum(item.get("p_total") or 0.0 for item in itens)
 
-    # 1. ND NC vs ND Requisição
-    if nd_nc and nd_req:
-        nd_nc_norm  = nd_nc.replace(".", "")
-        nd_req_norm = nd_req.replace(".", "")
+    # ── Agregar dados de todas as NCs ──
+    nds_nc = [nc.get("nd") for nc in notas_credito if nc.get("nd") and nc.get("nd") != "—"]
+    saldos_nc = [nc.get("saldo") for nc in notas_credito if nc.get("saldo") is not None]
+    total_saldo = sum(saldos_nc) if saldos_nc else None
 
-        if nd_nc_norm == nd_req_norm:
-            validacoes.append({
-                "verificacao": "ND da NC vs ND da Requisição",
-                "resultado":   f"{nd_nc} = {nd_req}",
-                "status":      "conforme",
-            })
-        elif nd_nc_norm == "339000":
-            validacoes.append({
-                "verificacao": "ND da NC vs ND da Requisição",
-                "resultado":   f"⚠️ NC com ND genérica ({nd_nc}) — Req usa {nd_req} — verificar DETAORC",
-                "status":      "ressalva",
-            })
+    # Encontrar prazo mais urgente (menor dias_restantes)
+    prazos_urgentes = []
+    for nc in notas_credito:
+        dias = nc.get("dias_restantes")
+        if dias is not None and isinstance(dias, int):
+            prazo_raw = nc.get("prazo_empenho") or "—"
+            prazos_urgentes.append((dias, prazo_raw, nc.get("numero", "—")))
+
+    # 1. ND das NCs vs ND da Requisição
+    if nds_nc and nd_req:
+        nd_req_norm = nd_req.replace(".", "")
+        
+        # Verificar se pelo menos uma NC tem a mesma ND da requisição
+        ncs_conferem = [nd for nd in nds_nc if nd.replace(".", "") == nd_req_norm]
+        ncs_genericas = [nd for nd in nds_nc if nd.replace(".", "") == "339000"]
+        
+        if ncs_conferem:
+            # Pelo menos uma NC confere
+            if len(nds_nc) == 1:
+                validacoes.append({
+                    "verificacao": "ND da NC vs ND da Requisição",
+                    "resultado":   f"{nds_nc[0]} = {nd_req}",
+                    "status":      "conforme",
+                })
+            else:
+                # Múltiplas NCs: mostrar quais conferem
+                nds_str = " + ".join([f"NC{i+1}: {nd}" for i, nd in enumerate(nds_nc)])
+                validacoes.append({
+                    "verificacao": "ND das NCs vs ND da Requisição",
+                    "resultado":   f"{nds_str} — {len(ncs_conferem)} confere(m) com Req: {nd_req}",
+                    "status":      "conforme",
+                })
+        elif ncs_genericas:
+            # Todas são genéricas
+            if len(nds_nc) == 1:
+                validacoes.append({
+                    "verificacao": "ND da NC vs ND da Requisição",
+                    "resultado":   f"⚠️ NC com ND genérica ({nds_nc[0]}) — Req usa {nd_req} — verificar DETAORC",
+                    "status":      "ressalva",
+                })
+            else:
+                nds_str = " + ".join([f"NC{i+1}: {nd}" for i, nd in enumerate(nds_nc)])
+                validacoes.append({
+                    "verificacao": "ND das NCs vs ND da Requisição",
+                    "resultado":   f"⚠️ {nds_str} — todas genéricas, Req usa {nd_req} — verificar DETAORC",
+                    "status":      "ressalva",
+                })
         else:
-            validacoes.append({
-                "verificacao": "ND da NC vs ND da Requisição",
-                "resultado":   f"⚠️ NC: {nd_nc} ≠ Req: {nd_req} — verificar com analista",
-                "status":      "ressalva",
-            })
+            # Nenhuma confere
+            if len(nds_nc) == 1:
+                validacoes.append({
+                    "verificacao": "ND da NC vs ND da Requisição",
+                    "resultado":   f"⚠️ NC: {nds_nc[0]} ≠ Req: {nd_req} — verificar com analista",
+                    "status":      "ressalva",
+                })
+            else:
+                nds_str = " + ".join([f"NC{i+1}: {nd}" for i, nd in enumerate(nds_nc)])
+                validacoes.append({
+                    "verificacao": "ND das NCs vs ND da Requisição",
+                    "resultado":   f"⚠️ {nds_str} ≠ Req: {nd_req} — verificar com analista",
+                    "status":      "ressalva",
+                })
     else:
-        nd_info = nd_nc or nd_req or "não extraído"
+        nd_info = (nds_nc[0] if nds_nc else None) or nd_req or "não extraído"
         validacoes.append({
             "verificacao": "ND da NC vs ND da Requisição",
             "resultado":   f"— ({nd_info})",
             "status":      "conforme",
         })
 
-    # 2. Saldo NC vs Valor Total Requisição
-    if saldo_nc is not None and total_req > 0:
+    # 2. Saldo total de todas as NCs vs Valor Total Requisição
+    if total_saldo is not None and total_saldo > 0 and total_req > 0:
         def _fmt(v):
-            return f"R$ {v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            """Formata valor monetário em R$ brasileiro."""
+            valor_formatado = f"{v:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+            return f"R$ {valor_formatado}"
 
-        if saldo_nc >= total_req:
-            validacoes.append({
-                "verificacao": "Saldo vs Valor Requisição",
-                "resultado":   f"{_fmt(saldo_nc)} ≥ {_fmt(total_req)}",
-                "status":      "conforme",
-            })
+        if len(saldos_nc) > 1:
+            # Múltiplas NCs: mostrar soma
+            saldos_str = " + ".join([_fmt(s) for s in saldos_nc])
+            if total_saldo >= total_req:
+                validacoes.append({
+                    "verificacao": "Saldo vs Valor Requisição",
+                    "resultado":   f"{saldos_str} = {_fmt(total_saldo)} ≥ {_fmt(total_req)}",
+                    "status":      "conforme",
+                })
+            else:
+                validacoes.append({
+                    "verificacao": "Saldo vs Valor Requisição",
+                    "resultado":   (
+                        f"⚠️ {saldos_str} = {_fmt(total_saldo)} < {_fmt(total_req)} — "
+                        "pode haver saldo complementar de outras datas"
+                    ),
+                    "status":      "ressalva",
+                })
         else:
-            validacoes.append({
-                "verificacao": "Saldo vs Valor Requisição",
-                "resultado":   (
-                    f"⚠️ Saldo {_fmt(saldo_nc)} < {_fmt(total_req)} — "
-                    "pode haver saldo complementar em outro PI"
-                ),
-                "status":      "ressalva",
-            })
+            # Uma NC
+            if total_saldo >= total_req:
+                validacoes.append({
+                    "verificacao": "Saldo vs Valor Requisição",
+                    "resultado":   f"{_fmt(total_saldo)} ≥ {_fmt(total_req)}",
+                    "status":      "conforme",
+                })
+            else:
+                validacoes.append({
+                    "verificacao": "Saldo vs Valor Requisição",
+                    "resultado":   (
+                        f"⚠️ Saldo {_fmt(total_saldo)} < {_fmt(total_req)} — "
+                        "pode haver saldo complementar de outras datas"
+                    ),
+                    "status":      "ressalva",
+                })
     else:
         validacoes.append({
             "verificacao": "Saldo vs Valor Requisição",
@@ -520,24 +644,33 @@ def _calcular_validacoes_nc(nota_credito: dict, itens: list, res: dict) -> list:
             "status":      "conforme",
         })
 
-    # 3. Prazo de empenho
-    if prazo_raw and prazo_raw != "—":
-        if dias is not None and isinstance(dias, int):
-            if dias < 0:
-                status  = "ressalva"
-                texto   = f"⚠️ VENCIDO há {abs(dias)} dias ({prazo_raw})"
-            elif dias <= 7:
-                status  = "ressalva"
-                texto   = f"⚠️ {prazo_raw} — URGENTE: {dias} dias restantes"
-            elif dias <= 15:
-                status  = "ressalva"
-                texto   = f"⚠️ {prazo_raw} — {dias} dias (atenção: pode vencer antes do empenho)"
-            else:
-                status  = "conforme"
-                texto   = f"{prazo_raw} — {dias} dias restantes"
+    # 3. Prazo de empenho mais urgente (menor dias_restantes)
+    if prazos_urgentes:
+        # Ordenar por dias_restantes (menor = mais urgente)
+        prazos_urgentes.sort(key=lambda x: x[0])
+        dias, prazo_raw, numero_nc = prazos_urgentes[0]
+        
+        if dias < 0:
+            status  = "ressalva"
+            texto   = f"⚠️ VENCIDO há {abs(dias)} dias ({prazo_raw})"
+            if len(prazos_urgentes) > 1:
+                texto += f" — NC mais urgente: {numero_nc}"
+        elif dias <= 7:
+            status  = "ressalva"
+            texto   = f"⚠️ {prazo_raw} — URGENTE: {dias} dias restantes"
+            if len(prazos_urgentes) > 1:
+                texto += f" — NC mais urgente: {numero_nc}"
+        elif dias <= 15:
+            status  = "ressalva"
+            texto   = f"⚠️ {prazo_raw} — {dias} dias (atenção: pode vencer antes do empenho)"
+            if len(prazos_urgentes) > 1:
+                texto += f" — NC mais urgente: {numero_nc}"
         else:
-            status = "conforme"
-            texto  = prazo_raw
+            status  = "conforme"
+            texto   = f"{prazo_raw} — {dias} dias restantes"
+            if len(prazos_urgentes) > 1:
+                texto += f" — NC mais urgente: {numero_nc}"
+        
         validacoes.append({
             "verificacao": "Prazo de empenho",
             "resultado":   texto,
@@ -666,7 +799,14 @@ def _adaptar_certidoes(res: dict) -> list[dict]:
 
         # Impedimento de Licitar
         imp = sicaf.get("impedimento_licitar", "—")
-        st_imp = "conforme" if "NADA CONSTA" in imp.upper() else "bloqueio"
+        imp_upper = imp.upper()
+        # Sistema indisponível → ressalva (amarelo), não bloqueio
+        if "INDISPONÍVEL" in imp_upper or "INDISPONIVEL" in imp_upper:
+            st_imp = "ressalva"
+        elif "NADA CONSTA" in imp_upper:
+            st_imp = "conforme"
+        else:
+            st_imp = "bloqueio"
         lista.append({
             "certidao": "Impedimento de Licitar",
             "resultado": imp,
@@ -688,7 +828,14 @@ def _adaptar_certidoes(res: dict) -> list[dict]:
 
         # Vínculo com Serviço Público
         vinc = sicaf.get("vinculo_servico_publico", "—")
-        st_vinc = "conforme" if "NADA CONSTA" in vinc.upper() else "bloqueio"
+        vinc_upper = vinc.upper()
+        # Sistema indisponível → ressalva (amarelo), não bloqueio
+        if "INDISPONÍVEL" in vinc_upper or "INDISPONIVEL" in vinc_upper:
+            st_vinc = "ressalva"
+        elif "NADA CONSTA" in vinc_upper:
+            st_vinc = "conforme"
+        else:
+            st_vinc = "bloqueio"
         lista.append({
             "certidao": "Vínculo Serv. Público",
             "resultado": vinc,
@@ -710,11 +857,14 @@ def _adaptar_certidoes(res: dict) -> list[dict]:
     # ──────────────────────────────────────────────────────────────────
     if cadin and cadin.get("cnpj"):
         sit_cadin = cadin.get("situacao", "—")
-        st_cadin = (
-            "conforme"
-            if sit_cadin in ("REGULAR", "NADA CONSTA")
-            else "bloqueio"
-        )
+        sit_cadin_upper = sit_cadin.upper()
+        # Sistema indisponível → ressalva (amarelo), não bloqueio
+        if "INDISPONÍVEL" in sit_cadin_upper or "INDISPONIVEL" in sit_cadin_upper:
+            st_cadin = "ressalva"
+        elif sit_cadin in ("REGULAR", "NADA CONSTA"):
+            st_cadin = "conforme"
+        else:
+            st_cadin = "bloqueio"
         lista.append({
             "certidao": "CADIN",
             "resultado": f"{cadin['cnpj']} — {sit_cadin}",
@@ -738,8 +888,17 @@ def _adaptar_certidoes(res: dict) -> list[dict]:
     if cadastros:
         for cad in cadastros:
             resultado = cad.get("resultado", "—")
-            eh_nada_consta = "NADA CONSTA" in resultado.upper()
-            st_cad = "conforme" if eh_nada_consta else "bloqueio"
+            resultado_upper = resultado.upper()
+            
+            # Sistema indisponível → ressalva (amarelo), não bloqueio
+            # Indisponível ≠ empresa irregular
+            if "INDISPONÍVEL" in resultado_upper or "INDISPONIVEL" in resultado_upper:
+                st_cad = "ressalva"
+            elif "NADA CONSTA" in resultado_upper:
+                st_cad = "conforme"
+            else:
+                st_cad = "bloqueio"
+            
             lista.append({
                 "certidao": cad.get("nome_curto", cad.get("cadastro", "—")),
                 "resultado": resultado,
@@ -1040,7 +1199,11 @@ if "visualizando_historico_id" in st.session_state and not pdf_file:
     identificacao       = _dc.get("identificacao", {})
     itens               = _dc.get("itens", [])
     validacoes_req      = _dc.get("validacoes_req", {})
-    nota_credito        = _dc.get("nota_credito", {})
+    nota_credito_raw    = _dc.get("nota_credito", {})
+    # Garantir que nota_credito seja sempre um dict (compatibilidade)
+    nota_credito        = nota_credito_raw if isinstance(nota_credito_raw, dict) else (nota_credito_raw[0] if isinstance(nota_credito_raw, list) and nota_credito_raw else {})
+    # Criar lista de NCs adaptadas (pode ser uma lista de dicts ou apenas um dict)
+    notas_credito       = [nota_credito] if isinstance(nota_credito, dict) else (nota_credito_raw if isinstance(nota_credito_raw, list) else [])
     validacoes_nc       = _dc.get("validacoes_nc", [])
     certidoes           = _dc.get("certidoes", [])
     resultado           = _dc.get("resultado", {
@@ -1083,7 +1246,8 @@ if "visualizando_historico_id" in st.session_state and not pdf_file:
 # ══════════════════════════════════════════════════════════════════════
 if not _modo_historico:
     # ── Estado vazio (sem PDF) ──────────────────────────────────────
-    if not pdf_file:
+    # Se não há PDF mas há análise em andamento/concluída, continuar exibindo
+    if not pdf_file and "resultado_extracao" not in st.session_state:
         st.markdown(
             '<div class="estado-vazio">'
             '<div class="icone">📄</div>'
@@ -1100,85 +1264,89 @@ if not _modo_historico:
         st.session_state.pop("dados_historico", None)
 
     # ── Processamento do PDF (roda apenas uma vez por arquivo) ──────
-    # Usar file_id (único por upload) para detectar se é um novo PDF
-    _pdf_id = getattr(pdf_file, "file_id", pdf_file.name)
-    if (
-        "resultado_extracao" not in st.session_state
-        or st.session_state.get("ultimo_pdf_id") != _pdf_id
-    ):
-        # Container para feedback visual
-        status_container = st.container()
-        with status_container:
-            st.info("🔄 **Processando PDF...** Por favor, aguarde.")
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+    # Se não há PDF mas há resultado_extracao, pular processamento (análise já em andamento/concluída)
+    if not pdf_file and "resultado_extracao" in st.session_state:
+        # Análise já existe, pular processamento
+        pass
+    elif pdf_file:
+        # Usar file_id (único por upload) para detectar se é um novo PDF
+        _pdf_id = getattr(pdf_file, "file_id", pdf_file.name)
+        if (
+            "resultado_extracao" not in st.session_state
+            or st.session_state.get("ultimo_pdf_id") != _pdf_id
+        ):
+            # Placeholders para feedback visual
+            status_info = st.empty()
+            status_info.info("🔄 **Processando PDF...** Por favor, aguarde.")
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
-        try:
-            # Etapa 1 — extração real do PDF
-            status_text.markdown("📄 **Etapa 1/4:** Lendo e extraindo dados do PDF...")
-            progress_bar.progress(0.10)
-            resultado_extracao = _processar_pdf(pdf_file)
-
-            # Verificar se extração retornou dados
-            ident_check = resultado_extracao.get("identificacao", {})
-            if not ident_check.get("nup") and not ident_check.get("om"):
-                st.warning(
-                    f"⚠️ **Atenção:** A extração retornou poucos dados para '{pdf_file.name}'. "
-                    "Verifique se o PDF está completo e legível."
-                )
-
-            # Etapa 2 — validação da requisição
-            status_text.markdown("✅ **Etapa 2/4:** Validando requisição e itens...")
-            progress_bar.progress(0.40)
-            time.sleep(0.1)
-
-            # Etapa 3 — verificação de certidões
-            status_text.markdown("🔍 **Etapa 3/4:** Verificando certidões e NC...")
-            progress_bar.progress(0.70)
-            time.sleep(0.1)
-
-            # Etapa 4 — geração de resultado
-            status_text.markdown("📊 **Etapa 4/4:** Gerando resultado final...")
-            progress_bar.progress(0.90)
-            time.sleep(0.1)
-
-            progress_bar.progress(1.00)
-            status_text.markdown("✅ **Processamento concluído!**")
-            time.sleep(0.3)
-
-            # Limpar feedback
-            progress_bar.empty()
-            status_text.empty()
-            status_container.empty()
-
-            st.session_state.resultado_extracao = resultado_extracao
-            st.session_state.pdf_processado     = True
-            st.session_state.ultimo_pdf         = pdf_file.name
-            st.session_state.ultimo_pdf_id      = _pdf_id
-
-            # ── Registrar pregão/contrato no banco (automático) ─────────
             try:
-                _registrar_pregao_automatico(resultado_extracao)
-                _registrar_contrato_automatico(resultado_extracao)
-            except Exception as e:
-                print(f"[AVISO] Erro ao registrar no banco: {e}")
+                # Etapa 1 — extração real do PDF
+                status_text.markdown("📄 **Etapa 1/4:** Lendo e extraindo dados do PDF...")
+                progress_bar.progress(0.10)
+                resultado_extracao = _processar_pdf(pdf_file)
 
-        except Exception as e:
-            # Limpar feedback em caso de erro
-            progress_bar.empty()
-            status_text.empty()
-            status_container.empty()
-            
-            # Mensagem de erro mais clara
-            st.error(
-                f"❌ **Erro ao processar o PDF:**\n\n"
-                f"**Detalhes:** {str(e)}\n\n"
-                f"**Sugestões:**\n"
-                f"- Verifique se o arquivo não está corrompido\n"
-                f"- Tente abrir o PDF em outro leitor para confirmar que está íntegro\n"
-                f"- Se o erro persistir, entre em contato com o suporte"
-            )
-            st.stop()
+                # Verificar se extração retornou dados
+                ident_check = resultado_extracao.get("identificacao", {})
+                if not ident_check.get("nup") and not ident_check.get("om"):
+                    st.warning(
+                        f"⚠️ **Atenção:** A extração retornou poucos dados para '{pdf_file.name}'. "
+                        "Verifique se o PDF está completo e legível."
+                    )
+
+                # Etapa 2 — validação da requisição
+                status_text.markdown("✅ **Etapa 2/4:** Validando requisição e itens...")
+                progress_bar.progress(0.40)
+                time.sleep(0.1)
+
+                # Etapa 3 — verificação de certidões
+                status_text.markdown("🔍 **Etapa 3/4:** Verificando certidões e NC...")
+                progress_bar.progress(0.70)
+                time.sleep(0.1)
+
+                # Etapa 4 — geração de resultado
+                status_text.markdown("📊 **Etapa 4/4:** Gerando resultado final...")
+                progress_bar.progress(0.90)
+                time.sleep(0.1)
+
+                progress_bar.progress(1.00)
+                status_text.markdown("✅ **Processamento concluído!**")
+                time.sleep(0.3)
+
+                # Limpar feedback
+                status_info.empty()
+                progress_bar.empty()
+                status_text.empty()
+
+                st.session_state.resultado_extracao = resultado_extracao
+                st.session_state.pdf_processado     = True
+                st.session_state.ultimo_pdf         = pdf_file.name
+                st.session_state.ultimo_pdf_id      = _pdf_id
+
+                # ── Registrar pregão/contrato no banco (automático) ─────────
+                try:
+                    _registrar_pregao_automatico(resultado_extracao)
+                    _registrar_contrato_automatico(resultado_extracao)
+                except Exception as e:
+                    print(f"[AVISO] Erro ao registrar no banco: {e}")
+
+            except Exception as e:
+                # Limpar feedback em caso de erro
+                status_info.empty()
+                progress_bar.empty()
+                status_text.empty()
+                
+                # Mensagem de erro mais clara
+                st.error(
+                    f"❌ **Erro ao processar o PDF:**\n\n"
+                    f"**Detalhes:** {str(e)}\n\n"
+                    f"**Sugestões:**\n"
+                    f"- Verifique se o arquivo não está corrompido\n"
+                    f"- Tente abrir o PDF em outro leitor para confirmar que está íntegro\n"
+                    f"- Se o erro persistir, entre em contato com o suporte"
+                )
+                st.stop()
 
     # ── Adaptar dados reais do extrator ─────────────────────────────
     res = st.session_state.get("resultado_extracao", {})
@@ -1187,8 +1355,10 @@ if not _modo_historico:
     itens          = _adaptar_itens(res)
     validacoes_req = _calcular_validacoes_req(itens)
     simulacao      = _adaptar_simulacao(res, itens)
-    nota_credito   = _adaptar_nc(res)
-    validacoes_nc  = _calcular_validacoes_nc(nota_credito, itens, res)
+    notas_credito  = _adaptar_nc(res)  # Agora retorna lista
+    # Para compatibilidade: manter nota_credito como primeira NC (usado em outros lugares)
+    nota_credito   = notas_credito[0] if notas_credito else {}
+    validacoes_nc  = _calcular_validacoes_nc(notas_credito, itens, res)
 
     # ── Certidões — dados reais do extrator ──────────────────────────
     certidoes = _adaptar_certidoes(res)
@@ -1259,6 +1429,88 @@ icone_e4 = {"approval": "🟢", "caveat": "⚠️", "rejection": "🔴"}.get(
     resultado.get("tipo", "caveat"), "⚠️"
 )
 
+# ── Botões de ação no topo (Salvar e Descartar) ───────────────────────
+if not _modo_historico and st.session_state.get("resultado_extracao"):
+    st.markdown("---")
+    
+    # Campo de observações no topo
+    # O st.text_input já gerencia automaticamente o session_state com a key
+    observacoes_topo = st.text_input(
+        "Observações (opcional)",
+        placeholder="Anotações livres sobre esta análise...",
+        key="obs_salvar",
+        value=st.session_state.get("obs_salvar", "")
+    )
+    
+    # Botões de ação
+    col_salvar_topo, col_descartar_topo = st.columns(2)
+    
+    with col_salvar_topo:
+        if st.button("💾 Salvar Análise", type="primary", use_container_width=True, key="btn_salvar_topo"):
+            # Mesma lógica do botão de salvar de baixo
+            try:
+                nup = identificacao.get("nup", "SEM_NUP")
+                despacho_final = st.session_state.get("despacho_editado") or despacho
+                observacoes_usuario = st.session_state.get("obs_salvar", "")
+                
+                analise_id = database.salvar_analise(
+                    nup=nup,
+                    resultado_tipo=resultado.get("tipo", "caveat"),
+                    identificacao=identificacao,
+                    itens=itens,
+                    nota_credito=nota_credito,
+                    certidoes=certidoes,
+                    validacoes_req=validacoes_req,
+                    validacoes_nc=validacoes_nc,
+                    resultado_validacao=resultado,
+                    mascara_ne=mascara,
+                    despacho=despacho_final,
+                    divergencias_mascara=divergencias_mascara,
+                    observacoes=observacoes_usuario or None,
+                )
+                st.success(f"✅ Análise salva com sucesso! (ID {analise_id})")
+                time.sleep(0.5)
+                st.rerun()
+            except Exception as e:
+                st.error(
+                    f"❌ **Erro ao salvar análise:**\n\n"
+                    f"**Detalhes:** {str(e)}\n\n"
+                    f"**Sugestões:**\n"
+                    f"- Verifique se o banco de dados está acessível\n"
+                    f"- Tente salvar novamente\n"
+                    f"- Se o erro persistir, verifique os logs do sistema"
+                )
+    
+    with col_descartar_topo:
+        if st.button("🗑️ Descartar Análise", use_container_width=True, key="btn_descartar_topo"):
+            st.session_state["mostrar_modal_descartar"] = True
+            st.rerun()
+    
+    # Modal de confirmação para descartar
+    if st.session_state.get("mostrar_modal_descartar", False):
+        st.markdown("---")
+        st.warning("⚠️ **Descartar Análise**")
+        st.markdown("Tem certeza que deseja descartar esta análise? Esta ação não pode ser desfeita.")
+        
+        col_confirmar, col_cancelar = st.columns(2)
+        with col_confirmar:
+            if st.button("✅ Sim, Descartar", type="primary", use_container_width=True, key="btn_confirmar_descartar"):
+                # Limpar todos os dados da análise
+                st.session_state.pop("resultado_extracao", None)
+                st.session_state.pop("pdf_processado", None)
+                st.session_state.pop("ultimo_pdf", None)
+                st.session_state.pop("ultimo_pdf_id", None)
+                st.session_state.pop("despacho_editado", None)
+                st.session_state.pop("obs_salvar", None)
+                st.session_state.pop("mostrar_modal_descartar", None)
+                st.rerun()
+        
+        with col_cancelar:
+            if st.button("❌ Cancelar", use_container_width=True, key="btn_cancelar_descartar"):
+                st.session_state.pop("mostrar_modal_descartar", None)
+                st.rerun()
+    
+    st.markdown("")  # Espaçamento
 
 # ══════════════════════════════════════════════════════════════════════
 # ESTÁGIO 1 — IDENTIFICAÇÃO
@@ -1326,6 +1578,10 @@ with st.expander(f"{icone_e2} ESTÁGIO 2 — REQUISIÇÃO E ITENS", expanded=Tru
         )
     html_sim += '</div>'
     st.markdown(html_sim, unsafe_allow_html=True)
+    
+    # Espaçamento inferior para aumentar a box do estágio 2
+    st.markdown("")
+    st.markdown("")
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1337,7 +1593,16 @@ with st.expander(f"{icone_e3} ESTÁGIO 3 — NC E CERTIDÕES", expanded=True):
     if analise_sem_nc:
         st.warning("⚠️ **Modo Análise sem NC ativado** — validações da NC foram puladas.")
     else:
-        components.render_nota_credito_card(nota_credito)
+        # Exibir múltiplas NCs em abas se houver mais de uma
+        if len(notas_credito) > 1:
+            # Criar abas para cada NC
+            tabs = st.tabs([f"NC {i+1}: {nc.get('numero', '—')}" for i, nc in enumerate(notas_credito)])
+            for tab, nc in zip(tabs, notas_credito):
+                with tab:
+                    components.render_nota_credito_card(nc)
+        else:
+            # Uma única NC: exibir normalmente
+            components.render_nota_credito_card(notas_credito[0] if notas_credito else {})
 
         st.markdown("")
         st.markdown("**Validações Cruzadas:**")
@@ -1432,7 +1697,11 @@ with st.expander(f"{icone_e4} ESTÁGIO 4 — DECISÃO E OUTPUTS", expanded=True)
         st.info("ℹ️ Máscara da NE não gerada — NC não extraída do PDF.")
 
     # ── Despacho (só para ressalva e reprovação) ──
-    despacho_editado = despacho  # valor padrão (será sobrescrito se editável)
+    # Usar session_state para persistir o despacho editado
+    if "despacho_editado" not in st.session_state:
+        st.session_state["despacho_editado"] = despacho
+    
+    despacho_editado = st.session_state.get("despacho_editado", despacho)
 
     if resultado.get("tipo") != "approval":
         st.markdown("---")
@@ -1447,61 +1716,57 @@ with st.expander(f"{icone_e4} ESTÁGIO 4 — DECISÃO E OUTPUTS", expanded=True)
 
         despacho_editado = st.text_area(
             "Texto do Despacho (editável)",
-            value=despacho,
+            value=st.session_state.get("despacho_editado", despacho),
             height=150,
-            label_visibility="collapsed"
+            label_visibility="collapsed",
+            key="text_area_despacho"
         )
+        # Salvar no session_state sempre que for editado
+        st.session_state["despacho_editado"] = despacho_editado
 
         copiar_para_clipboard(despacho_editado, "btn_despacho")
     else:
         st.markdown("---")
         st.success("✅ Processo aprovado — encaminhar ao OD para autorização do empenho.")
 
-    # ── Botão Salvar Análise ─────────────────────────────────────────
+    # ── Botão Salvar Análise (final da página) ────────────────────────
     if not _modo_historico:
         st.markdown("---")
 
-        col_salvar, col_obs = st.columns([1, 3])
-        with col_obs:
-            observacoes_usuario = st.text_input(
-                "Observações (opcional)",
-                placeholder="Anotações livres sobre esta análise...",
-                key="obs_salvar",
-            )
-        with col_salvar:
-            st.markdown("")  # espaçamento vertical
-            if st.button("💾 Salvar Análise", type="primary",
-                         use_container_width=True, key="btn_salvar"):
-                try:
-                    nup = identificacao.get("nup", "SEM_NUP")
-                    despacho_final = despacho_editado or despacho
-                    analise_id = database.salvar_analise(
-                        nup=nup,
-                        resultado_tipo=resultado.get("tipo", "caveat"),
-                        identificacao=identificacao,
-                        itens=itens,
-                        nota_credito=nota_credito,
-                        certidoes=certidoes,
-                        validacoes_req=validacoes_req,
-                        validacoes_nc=validacoes_nc,
-                        resultado_validacao=resultado,
-                        mascara_ne=mascara,
-                        despacho=despacho_final,
-                        divergencias_mascara=divergencias_mascara,
-                        observacoes=observacoes_usuario or None,
-                    )
-                    st.success(f"✅ Análise salva com sucesso! (ID {analise_id})")
-                    time.sleep(0.5)
-                    st.rerun()  # Atualizar sidebar com novo histórico
-                except Exception as e:
-                    st.error(
-                        f"❌ **Erro ao salvar análise:**\n\n"
-                        f"**Detalhes:** {str(e)}\n\n"
-                        f"**Sugestões:**\n"
-                        f"- Verifique se o banco de dados está acessível\n"
-                        f"- Tente salvar novamente\n"
-                        f"- Se o erro persistir, verifique os logs do sistema"
-                    )
+        # Campo de observações já está no topo, então só mostrar botão aqui
+        if st.button("💾 Salvar Análise", type="primary",
+                     use_container_width=True, key="btn_salvar"):
+            try:
+                nup = identificacao.get("nup", "SEM_NUP")
+                despacho_final = despacho_editado or despacho
+                observacoes_usuario = st.session_state.get("obs_salvar", "")
+                analise_id = database.salvar_analise(
+                    nup=nup,
+                    resultado_tipo=resultado.get("tipo", "caveat"),
+                    identificacao=identificacao,
+                    itens=itens,
+                    nota_credito=nota_credito,
+                    certidoes=certidoes,
+                    validacoes_req=validacoes_req,
+                    validacoes_nc=validacoes_nc,
+                    resultado_validacao=resultado,
+                    mascara_ne=mascara,
+                    despacho=despacho_final,
+                    divergencias_mascara=divergencias_mascara,
+                    observacoes=observacoes_usuario or None,
+                )
+                st.success(f"✅ Análise salva com sucesso! (ID {analise_id})")
+                time.sleep(0.5)
+                st.rerun()  # Atualizar sidebar com novo histórico
+            except Exception as e:
+                st.error(
+                    f"❌ **Erro ao salvar análise:**\n\n"
+                    f"**Detalhes:** {str(e)}\n\n"
+                    f"**Sugestões:**\n"
+                    f"- Verifique se o banco de dados está acessível\n"
+                    f"- Tente salvar novamente\n"
+                    f"- Se o erro persistir, verifique os logs do sistema"
+                )
     else:
         # Modo histórico: mostrar observações e botão para voltar
         st.markdown("---")

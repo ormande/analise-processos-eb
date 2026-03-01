@@ -92,7 +92,18 @@ _SIGLAS_ORGAO = {
     "DIRETORIA DE GESTAO ORCAMENTARIA":     "DGO",
     "DGO":                                   "DGO",
     "DEPARTAMENTO DE ENGENHARIA E CONSTRUÇÃO": "DEC",
+    "DEPARTAMENTO DE ENGENHARIA E CONSTRUCAO": "DEC",  # Sem cedilha (OCR)
+    "DEPARTAMENTO DE ENGENHARIA E CONSTRUÇÃO-G": "DEC",  # Com -G do SIAFI
+    "DEPARTAMENTO DE ENGENHARIA E CONSTRUCAO-G": "DEC",  # Sem cedilha + -G
     "DEC":                                   "DEC",
+    "CENTRO DE OBTENÇÕES DO EXÉRCITO":      "CObtEx",
+    "CENTRO DE OBTENCOES DO EXERCITO":      "CObtEx",  # Sem acentos (OCR)
+    "COBTEX":                                "CObtEx",
+    "COMANDO MILITAR DO OESTE":             "CMO",
+    "CMO":                                   "CMO",
+    "9º GRUPAMENTO LOGÍSTICO":              "9º GPT LOG",
+    "9 GRUPAMENTO LOGISTICO":               "9º GPT LOG",  # Sem acentos
+    "9º GPT LOG":                            "9º GPT LOG",
     "DIRETORIA DE SAÚDE":                   "D SAÚ",
     "D SAÚ":                                 "D SAÚ",
     "DIRETORIA DE FORMAÇÃO E APERFEIÇOAMENTO": "DFA",
@@ -104,19 +115,28 @@ _SIGLAS_ORGAO = {
 
 
 def _abreviar_orgao(orgao: str | None) -> str:
-    """Converte nome completo de órgão em sigla, se possível."""
+    """
+    Converte nome completo de órgão em sigla, se possível.
+    Se não encontrar no mapa, tenta extrair sigla de parênteses ou usa nome completo (até 30 chars).
+    """
     if not orgao:
         return ""
 
     orgao_upper = orgao.strip().upper()
     orgao_upper = re.sub(r"^(DO|DA|DE)\s+", "", orgao_upper)
 
+    # Buscar no mapa de siglas
     for chave, sigla in _SIGLAS_ORGAO.items():
         if chave.upper() in orgao_upper or orgao_upper in chave.upper():
             return sigla
 
-    # Se não encontrou, retorna o nome original (limitado)
-    return orgao_upper[:15]
+    # Tentar extrair sigla de parênteses (ex: "Departamento (DEC)")
+    sigla_parenteses = re.search(r"\(([A-Z]{2,10})\)", orgao_upper)
+    if sigla_parenteses:
+        return sigla_parenteses.group(1)
+
+    # Se não encontrou, retorna o nome original (aumentado para 30 chars)
+    return orgao_upper[:30]
 
 
 def _preposicao_orgao(orgao: str | None) -> str:
@@ -169,9 +189,28 @@ def _gerar_mascara_nc(ident: dict, nc: dict, tipo_processo: str) -> str:
     """Gera a máscara para uma NC individual."""
 
     # ── Campos base ──
-    om = _abreviar_om(ident.get("om"))
+    # Fallback para OM: se não extraída, usar orgao_origem da capa
+    om_raw = ident.get("om")
+    if not om_raw or om_raw == "—":
+        om_raw = ident.get("orgao_origem") or ""
+    om = _abreviar_om(om_raw)
+    
+    # Fallback para requisição: se não extraída, buscar no campo assunto
     nr_req = ident.get("nr_requisicao", "")
     setor = ident.get("setor", "")
+    if not nr_req:
+        assunto = ident.get("assunto", "")
+        if assunto:
+            # Padrão: "Req n° M012/2026 – Pel Sup" → nr_req = "M012/2026", setor = "Pel Sup"
+            req_match = re.search(
+                r"Req\s*n[°º]?\s*([\w/]+(?:/\d{4})?)\s*[-–]\s*(.+)",
+                assunto, re.IGNORECASE
+            )
+            if req_match:
+                nr_req = req_match.group(1).strip()
+                if not setor:
+                    setor = req_match.group(2).strip()
+    
     objeto = _resumir_objeto(ident.get("objeto") or ident.get("assunto") or "")
 
     # ── Dados da NC ──
@@ -244,45 +283,57 @@ def _montar_licitacao(
     if nc:
         nc_str = nc
         if data_nc:
-            nc_str += f", de {data_nc},"
+            nc_str += f", de {data_nc},"  # Vírgula após data
         else:
-            nc_str += ","
+            nc_str += ","  # Vírgula após NC se não tem data
         partes.append(nc_str)
 
     # Órgão emissor
     if orgao:
         prep = _preposicao_orgao(orgao)
-        partes.append(f"{prep},")
+        partes.append(f"{prep},")  # Vírgula após órgão
 
-    # ND (obrigatório)
+    # Dados orçamentários: separar cada campo com vírgula
+    # Sequência: ND, FONTE, PTRES, UGR (cada um separado por vírgula)
+    campos_orcamentarios = []
+    
+    # ND (obrigatório) — termina com vírgula SE houver outros campos depois
     if nd:
-        partes.append(f"ND {nd}")
+        # Verificar se há FONTE, PTRES ou UGR depois
+        tem_campos_depois = bool(fonte or ptres or ugr)
+        # Vírgula após ND se houver outros campos orçamentários
+        campos_orcamentarios.append(f"ND {nd}{',' if tem_campos_depois else ''}")
 
     # FONTE (condicional — só se presente na NC)
     if fonte:
-        partes.append(f"FONTE {fonte}")
+        tem_campos_depois = bool(ptres or ugr)
+        campos_orcamentarios.append(f"FONTE {fonte}{',' if tem_campos_depois else ''}")
 
     # PTRES (condicional)
     if ptres:
-        partes.append(f"PTRES {ptres}")
+        tem_campos_depois = bool(ugr)
+        campos_orcamentarios.append(f"PTRES {ptres}{',' if tem_campos_depois else ''}")
 
-    # UGR (condicional)
+    # UGR (condicional) — último campo orçamentário, sem vírgula
     if ugr:
-        partes.append(f"UGR {ugr}")
+        campos_orcamentarios.append(f"UGR {ugr}")
 
-    # PI
+    # Adicionar todos os campos orçamentários
+    partes.extend(campos_orcamentarios)
+
+    # PI — vírgula após PI
     if pi:
         partes.append(f"PI {pi},")
 
-    # PE Nr/Ano
+    # PE Nr/Ano — vírgula após PE
     if nr_pregao:
         partes.append(f"PE {nr_pregao},")
 
-    # UASG (tipo_part)
+    # UASG (tipo_part) — sempre termina com ponto final
     if uasg:
         partes.append(f"UASG {uasg} ({tipo_part}).")
     else:
-        # Fechar sem UASG
+        # Fechar sem UASG: remover vírgula da última parte e adicionar ponto
         if partes and partes[-1].endswith(","):
             partes[-1] = partes[-1][:-1] + "."
 
@@ -309,33 +360,44 @@ def _montar_contrato(
     if nc:
         nc_str = nc
         if data_nc:
-            nc_str += f", de {data_nc},"
+            nc_str += f", de {data_nc},"  # Vírgula após data
         else:
-            nc_str += ","
+            nc_str += ","  # Vírgula após NC se não tem data
         partes.append(nc_str)
 
     if orgao:
         prep = _preposicao_orgao(orgao)
-        partes.append(f"{prep},")
+        partes.append(f"{prep},")  # Vírgula após órgão
 
+    # Dados orçamentários: separar cada campo com vírgula
+    # Sequência: ND, PTRES, UGR (cada um separado por vírgula)
+    campos_orcamentarios = []
+    
     if nd:
-        partes.append(f"ND {nd},")
+        tem_campos_depois = bool(ptres or ugr)
+        # Vírgula após ND se houver outros campos orçamentários
+        campos_orcamentarios.append(f"ND {nd}{',' if tem_campos_depois else ''}")
 
     if ptres:
-        partes.append(f"PTRES {ptres},")
+        tem_campos_depois = bool(ugr)
+        campos_orcamentarios.append(f"PTRES {ptres}{',' if tem_campos_depois else ''}")
 
     if ugr:
-        partes.append(f"UGR {ugr}")
+        campos_orcamentarios.append(f"UGR {ugr}")
+
+    # Adicionar todos os campos orçamentários
+    partes.extend(campos_orcamentarios)
 
     if pi:
-        partes.append(f"PI {pi},")
+        partes.append(f"PI {pi},")  # Vírgula após PI
 
     if nr_contrato:
-        partes.append(f"CONT {nr_contrato},")
+        partes.append(f"CONT {nr_contrato},")  # Vírgula após CONT
 
     if uasg:
-        partes.append(f"UASG {uasg} (GER).")
+        partes.append(f"UASG {uasg} (GER).")  # Sempre termina com ponto final
     else:
+        # Fechar sem UASG: remover vírgula da última parte e adicionar ponto
         if partes and partes[-1].endswith(","):
             partes[-1] = partes[-1][:-1] + "."
 
@@ -360,23 +422,24 @@ def _montar_dispensa(
     if nc:
         nc_str = nc
         if data_nc:
-            nc_str += f", de {data_nc},"
+            nc_str += f", de {data_nc},"  # Vírgula após data
         else:
-            nc_str += ","
+            nc_str += ","  # Vírgula após NC se não tem data
         partes.append(nc_str)
 
     if nd:
-        partes.append(f"ND {nd},")
+        partes.append(f"ND {nd},")  # Vírgula após ND
 
     if pi:
-        partes.append(f"PI {pi},")
+        partes.append(f"PI {pi},")  # Vírgula após PI
 
     if nr_disp:
-        partes.append(f"DISP {nr_disp},")
+        partes.append(f"DISP {nr_disp},")  # Vírgula após DISP
 
     if uasg:
-        partes.append(f"UASG {uasg} ({tipo_part}).")
+        partes.append(f"UASG {uasg} ({tipo_part}).")  # Sempre termina com ponto final
     else:
+        # Fechar sem UASG: remover vírgula da última parte e adicionar ponto
         if partes and partes[-1].endswith(","):
             partes[-1] = partes[-1][:-1] + "."
 

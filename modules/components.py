@@ -83,12 +83,17 @@ def render_nota_credito_card(nc):
     else:
         prazo_str = prazo_val
 
+    # ND: adicionar sinalização se divergente
+    nd_val = nc.get("nd", "—")
+    if nc.get("nd_divergente"):
+        nd_val = f"⚠️ {nd_val} (não confere com requisição)"
+    
     campos = [
         ("Número",        nc.get("numero", "—")),
         ("Data emissão",  nc.get("data_emissao", "—")),
         ("UG Emitente",   nc.get("ug_emitente", "—")),
         ("UG Favorecida", nc.get("ug_favorecida", "—")),
-        ("ND",            nc.get("nd", "—")),
+        ("ND",            nd_val),
         ("PTRES",         nc.get("ptres", "—")),
         ("FONTE",         nc.get("fonte", "—")),
         ("UGR",           nc.get("ugr", "—")),
@@ -134,7 +139,7 @@ def render_validacoes_nc(validacoes):
         html += (
             f'<tr class="{classe_row}">'
             f'<td>{val["verificacao"]}</td>'
-            f'<td style="font-family:monospace">{val["resultado"]}</td>'
+            f'<td>{val["resultado"]}</td>'
             f'<td style="text-align:center">{icone}</td>'
             '</tr>'
         )

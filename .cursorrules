@@ -109,3 +109,22 @@ O sistema é ferramenta de APOIO ao analista. Ele NUNCA reprova automaticamente.
 - 160142 — 9º B Sup
 - 160143 — H Mil A CG
 - 160078 — CMCG
+
+# Melhorias OCR/Extração — 20 FEV 2026
+- O extractor.py tem 3764 linhas. Só alterar as funções específicas indicadas no prompt.
+- Manter TODOS os imports existentes. Não reorganizar imports.
+- Manter compatibilidade com Windows (encoding UTF-8, paths com barras).
+- O sistema usa pdfplumber para texto + PyMuPDF/pytesseract para OCR como fallback.
+- Testar com: python modules/extractor.py (roda todos os PDFs da pasta tests/)
+- Formato brasileiro: R$ 1.234,56 (ponto milhar, vírgula decimal)
+- NÃO adicionar dependências ao requirements.txt sem perguntar.
+- NUNCA alterar app.py, components.py ou database.py nos prompts de extração.
+
+# Correções Pendentes — 21 FEV 2026
+- app.py tem 1613 linhas. Alterar APENAS as funções indicadas.
+- components.py NÃO deve ser alterado nestes prompts (exceto se indicado).
+- Manter TODA a lógica de histórico/banco de dados intacta.
+- Testar após cada prompt: streamlit run app.py → upload do PDF de teste.
+- Valores monetários: sempre "R$ X.XXX,XX" (cifrão + espaço + valor BR).
+- Variáveis de sessão (st.session_state) não devem ser alteradas.
+- O sistema roda LOCAL em Windows (analista da SAL/CAF).

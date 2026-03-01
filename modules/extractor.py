@@ -37,17 +37,128 @@ def agora_cg() -> datetime:
     """Retorna o datetime atual no fuso horário de Campo Grande (GMT-4)."""
     return datetime.now(TZ_CAMPO_GRANDE)
 
+
+# ── Log de extração (debug e relatório) ──
+class ExtractionLog:
+    """
+    Logger simples para extração: ativa/desativa por módulo, gera resumo
+    e permite salvar em arquivo. Não usa o módulo logging do Python.
+    """
+    EMOJI = {"info": "ℹ️", "ok": "✅", "warn": "⚠️", "erro": "❌"}
+
+    def __init__(self):
+        self.entries: list[dict] = []
+        self.verbose = True  # False em produção para silenciar terminal
+        # None = todos ativos; ou set {"OCR", "NC", "CLASSIFICAÇÃO", "ITENS", "CERTIDÕES", ...}
+        self.modulos_ativos: Optional[set[str]] = None
+
+    def log(self, modulo: str, msg: str, nivel: str = "info") -> None:
+        entry = {"modulo": modulo, "msg": msg, "nivel": nivel}
+        self.entries.append(entry)
+        if not self.verbose:
+            return
+        if self.modulos_ativos is not None and modulo not in self.modulos_ativos:
+            return
+        emoji = self.EMOJI.get(nivel, "")
+        print(f"[{modulo}] {emoji} {msg}")
+
+    def resumo(self, resultado: dict) -> dict:
+        """
+        Retorna resumo da extração para exibir na interface.
+        Inclui: páginas por categoria, uso de OCR, campos extraídos/faltantes, avisos.
+        """
+        meta = resultado.get("metadata") or {}
+        ident = resultado.get("identificacao") or {}
+        itens = resultado.get("itens") or []
+        ncs = resultado.get("nota_credito") or []
+
+        paginas_por_categoria = meta.get("paginas_por_categoria") or {}
+        total_paginas = meta.get("total_paginas", 0)
+        paginas_ocr = meta.get("paginas_ocr", 0)
+        paginas_com_texto = meta.get("paginas_com_texto", 0)
+
+        campos_extraidos = []
+        campos_faltantes = []
+        if ident.get("nup"):
+            campos_extraidos.append("NUP")
+        else:
+            campos_faltantes.append("NUP")
+        if ident.get("cnpj"):
+            campos_extraidos.append("CNPJ")
+        else:
+            campos_faltantes.append("CNPJ")
+        if ident.get("uasg"):
+            campos_extraidos.append("UASG")
+        else:
+            campos_faltantes.append("UASG")
+        if ident.get("fornecedor"):
+            campos_extraidos.append("Fornecedor")
+        if ident.get("nr_pregao") or ident.get("nr_contrato"):
+            campos_extraidos.append("Instrumento")
+        if itens:
+            campos_extraidos.append(f"Itens ({len(itens)})")
+        else:
+            campos_faltantes.append("Itens")
+        if ncs:
+            campos_extraidos.append(f"NC(s) ({len(ncs)})")
+
+        warnings = []
+        if not ident.get("nup"):
+            warnings.append("NUP não encontrado")
+        if not ident.get("cnpj"):
+            warnings.append("CNPJ não encontrado")
+        if not ident.get("uasg"):
+            warnings.append("UASG não encontrada")
+        if not itens:
+            warnings.append("Nenhum item extraído")
+
+        return {
+            "total_paginas": total_paginas,
+            "paginas_por_categoria": paginas_por_categoria,
+            "paginas_com_texto": paginas_com_texto,
+            "paginas_ocr": paginas_ocr,
+            "campos_extraidos": campos_extraidos,
+            "campos_faltantes": campos_faltantes,
+            "warnings": warnings,
+            "total_itens": len(itens),
+            "total_ncs": len(ncs),
+        }
+
+    def salvar_arquivo(self, caminho: str) -> None:
+        """Salva entradas do log em arquivo de texto para debug posterior."""
+        with open(caminho, "w", encoding="utf-8") as f:
+            for e in self.entries:
+                f.write(f"[{e['modulo']}] {e['nivel']} {e['msg']}\n")
+
+
+_log = ExtractionLog()
+
 # ── OCR (opcional — funciona sem, mas não extrai páginas em imagem) ──
 try:
     import fitz as _fitz          # PyMuPDF — renderiza página → imagem
     import pytesseract as _tess   # wrapper do Tesseract OCR
     from PIL import Image as _PILImage
     _OCR_DISPONIVEL = True
-    print("[OCR] Tesseract + PyMuPDF disponiveis — OK")
+    _log.log("OCR", "Tesseract + PyMuPDF disponiveis — OK", "ok")
 except ImportError as _e:
     _OCR_DISPONIVEL = False
-    print(f"[OCR] Bibliotecas de OCR não instaladas ({_e}). "
-          "Páginas em imagem NÃO serão processadas.")
+    _log.log("OCR", f"Bibliotecas de OCR não instaladas ({_e}). "
+            "Páginas em imagem NÃO serão processadas.", "warn")
+
+# ── Pré-processamento OCR: Pillow (ImageFilter/ImageOps/Enhance) e OpenCV (opcional) ──
+_OCR_PIL_FILTERS = False
+_OCR_CV2 = None
+if _OCR_DISPONIVEL:
+    try:
+        from PIL import ImageFilter, ImageOps, ImageEnhance
+        _OCR_PIL_FILTERS = True
+    except ImportError:
+        ImageFilter = ImageOps = ImageEnhance = None  # type: ignore
+    try:
+        import cv2 as _cv2
+        _OCR_CV2 = _cv2
+    except ImportError:
+        pass
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -83,6 +194,27 @@ _OCR_DPI = 300
 # Fator de escala para imagens incorporadas pequenas (melhora OCR)
 _OCR_ESCALA_IMG = 3
 
+# ── UASG: mapa UG → UASG (para NC/espelho) e OM → UASG (fallback) ──
+_UG_PARA_UASG = {
+    "160136": "160136",  # 9º Gpt Log
+    "160141": "160141",  # CRO/9
+    "160142": "160142",  # 9º B Sup
+    "160143": "160143",  # H Mil A CG
+    "160078": "160078",  # CMCG
+    "160512": "160512",  # 18º B Trnp
+    "160502": "160502",  # DEC (Dept Eng Construção)
+    "160504": "160504",  # SEC
+}
+_OM_PARA_UASG = {
+    "9º GPT LOG": "160136", "9 GPT LOG": "160136",
+    "CRO/9": "160141", "CRO 9": "160141",
+    "9º B SUP": "160142", "9 B SUP": "160142",
+    "H MIL A CG": "160143",
+    "CMCG": "160078",
+    "18º B TRNP": "160512", "18 B TRNP": "160512",
+    "9º B MNT": "160142",  # vinculado ao 9º B Sup
+}
+
 
 # ══════════════════════════════════════════════════════════════════════
 # FUNÇÕES AUXILIARES DE OCR
@@ -109,25 +241,105 @@ def _ocr_renderizar_pagina(pdf_path: str, page_idx: int,
         doc.close()
         return img
     except Exception as e:
-        print(f"[OCR] Erro ao renderizar página {page_idx + 1}: {e}")
+        _log.log("OCR", f"Erro ao renderizar página {page_idx + 1}: {e}", "erro")
         return None
+
+
+def _preprocessar_imagem_ocr(img: "_PILImage.Image") -> "_PILImage.Image":
+    """
+    Pré-processa imagem para melhorar resultado do Tesseract.
+    Aplica: grayscale → binarização (Otsu ou adaptativa se cv2) → remoção de ruído
+    → correção de contraste. Usa Pillow puro; se OpenCV estiver disponível, usa
+    como melhoria opcional. Degrada graciosamente se ImageFilter/ImageOps não existirem.
+    """
+    if img is None:
+        return img
+    w, h = img.width, img.height
+    try:
+        # Sempre converter para grayscale (disponível em qualquer PIL)
+        if img.mode != "L":
+            img = img.convert("L")
+
+        if _OCR_CV2 is not None:
+            # Melhoria opcional com OpenCV: binarização adaptativa + denoising
+            import numpy as _np
+            arr = _np.array(img)
+            # Denoising leve
+            arr = _OCR_CV2.medianBlur(arr, 3)
+            # Binarização adaptativa (melhor para scans com sombras)
+            arr = _OCR_CV2.adaptiveThreshold(
+                arr, 255, _OCR_CV2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                _OCR_CV2.THRESH_BINARY, 11, 2
+            )
+            img = _PILImage.fromarray(arr)
+            _log.log("OCR", f"Pré-processamento: {w}x{h} → grayscale → binarização (cv2) → ruído", "info")
+            return img
+
+        if not _OCR_PIL_FILTERS:
+            _log.log("OCR", f"Pré-processamento: {w}x{h} → grayscale (sem ImageFilter/ImageOps)", "info")
+            return img
+
+        # Pillow puro: Otsu → mediana → contraste
+        # Threshold de Otsu a partir do histograma
+        hist = img.histogram()
+        n = sum(hist)
+        if n == 0:
+            thresh = 128
+        else:
+            total_mean = sum(i * hist[i] for i in range(256)) / n
+            best_var, best_k = 0.0, 0
+            w_b, sum_b = 0, 0
+            for k in range(256):
+                w_b += hist[k]
+                if w_b == 0:
+                    continue
+                w_f = n - w_b
+                if w_f == 0:
+                    break
+                sum_b += k * hist[k]
+                m_b = sum_b / w_b
+                m_f = (total_mean * n - sum_b) / w_f
+                var = w_b * w_f * (m_b - m_f) ** 2
+                if var > best_var:
+                    best_var, best_k = var, k
+            thresh = best_k
+
+        img = img.point(lambda p: 255 if p > thresh else 0, "L")
+        img = img.filter(ImageFilter.MedianFilter(size=3))
+        img = ImageOps.autocontrast(img, cutoff=2)
+        _log.log("OCR", f"Pré-processamento: {w}x{h} → grayscale → binarização → ruído", "info")
+    except Exception as e:
+        _log.log("OCR", f"Pré-processamento falhou ({e}), usando imagem original", "warn")
+    return img
 
 
 def _ocr_extrair_texto(img: "_PILImage.Image", lang: str = "por",
                        psm: int = 3) -> str:
     """
     Executa Tesseract OCR em uma imagem PIL e retorna o texto extraído.
-    PSM 3 = auto (melhor para páginas inteiras).
-    PSM 6 = bloco uniforme (melhor para tabelas/blocos).
+    Aplica pré-processamento antes do OCR. PSM 3 = auto (páginas inteiras);
+    se o texto retornado for muito curto, tenta PSM 6 e PSM 4 como fallback.
     """
     if not _OCR_DISPONIVEL or img is None:
         return ""
     try:
+        img = _preprocessar_imagem_ocr(img)
         config = f"--oem 3 --psm {psm}"
         texto = _tess.image_to_string(img, lang=lang, config=config)
-        return texto.strip()
+        texto = texto.strip()
+
+        # Fallback de orientação: texto muito curto com PSM 3 → tentar PSM 6 e PSM 4
+        _min_chars_psm3_fallback = 50
+        if psm == 3 and len(texto) < _min_chars_psm3_fallback:
+            for psm_alt in (6, 4):
+                t_alt = _tess.image_to_string(
+                    img, lang=lang, config=f"--oem 3 --psm {psm_alt}"
+                ).strip()
+                if len(t_alt) > len(texto):
+                    texto = t_alt
+        return texto
     except Exception as e:
-        print(f"[OCR] Erro no Tesseract: {e}")
+        _log.log("OCR", f"Erro no Tesseract: {e}", "erro")
         return ""
 
 
@@ -141,7 +353,7 @@ def _ocr_pagina(pdf_path: str, page_idx: int) -> str:
         return ""
     texto = _ocr_extrair_texto(img, psm=3)
     if texto:
-        print(f"[OCR] Página {page_idx + 1}: {len(texto)} caracteres extraídos")
+        _log.log("OCR", f"Página {page_idx + 1}: {len(texto)} caracteres extraídos", "info")
     return texto
 
 
@@ -200,11 +412,11 @@ def _ocr_imagens_incorporadas(pdf_path: str, page_idx: int,
                         "altura": pix.height,
                     })
             except Exception as e:
-                print(f"[OCR] Erro ao processar imagem xref={xref}: {e}")
+                _log.log("OCR", f"Erro ao processar imagem xref={xref}: {e}", "erro")
 
         doc.close()
     except Exception as e:
-        print(f"[OCR] Erro ao extrair imagens da página {page_idx + 1}: {e}")
+        _log.log("OCR", f"Erro ao extrair imagens da página {page_idx + 1}: {e}", "erro")
 
     return resultados
 
@@ -231,6 +443,9 @@ def extrair_processo(pdf_path: str) -> dict:
             "metadata": { total_paginas, paginas_com_texto, paginas_ocr }
         }
     """
+    global _log
+    _log = ExtractionLog()
+
     resultado = {
         "identificacao": {},
         "itens": [],
@@ -278,6 +493,23 @@ def extrair_processo(pdf_path: str) -> dict:
 
         # Mesclar dados da requisição com identificação (complementa a capa)
         _mesclar_identificacao(resultado["identificacao"], dados_req)
+        
+        # ── Fallback: OM do orgao_origem ou interessado da capa ──
+        ident = resultado["identificacao"]
+        if not ident.get("om"):
+            # Tentar usar orgao_origem da capa (já extraído em resultado["identificacao"])
+            orgao_origem = ident.get("orgao_origem")
+            if orgao_origem:
+                # Verificar se parece ser OM (número + unidade militar)
+                if re.search(r"\d.*(Gpt|B\s|B\s+Mnt|B\s+Trnp|B\s+Sup|Cia|Esqd|Trnp|Mnt|Sup)", orgao_origem, re.IGNORECASE):
+                    ident["om"] = orgao_origem
+                    _log.log("REQUISIÇÃO", f"OM extraída do orgao_origem da capa: {orgao_origem}", "info")
+            # Fallback: usar interessado da capa (ex: "Cia R Mnt")
+            elif ident.get("interessado"):
+                interessado = ident.get("interessado")
+                if re.search(r"\d.*(Gpt|B\s|B\s+Mnt|B\s+Trnp|B\s+Sup|Cia|Esqd|Trnp|Mnt|Sup)", interessado, re.IGNORECASE):
+                    ident["om"] = interessado
+                    _log.log("REQUISIÇÃO", f"OM extraída do interessado da capa: {interessado}", "info")
 
         # Extrair itens via tabelas estruturadas do pdfplumber
         itens_tabela = _extrair_itens_via_tabelas(
@@ -294,7 +526,33 @@ def extrair_processo(pdf_path: str) -> dict:
             )
             if itens_ocr:
                 resultado["itens"] = itens_ocr
-                print(f"[OCR] {len(itens_ocr)} item(ns) extraído(s) via OCR")
+                _log.log("OCR", f"{len(itens_ocr)} item(ns) extraído(s) via OCR", "ok")
+
+        # ── Fallback: ND do processo para itens sem nd_si ──
+        nd_processo = resultado["identificacao"].get("nd")
+        if nd_processo and resultado["itens"]:
+            nd_norm = _normalizar_nd_si(nd_processo)
+            if nd_norm:
+                for item in resultado["itens"]:
+                    if not item.get("nd_si"):
+                        item["nd_si"] = nd_norm
+        
+        # ── Filtrar itens fantasma (sem dados reais) ──
+        # Itens que aparecem quando a tabela é imagem e OCR falha
+        if resultado["itens"]:
+            itens_antes = len(resultado["itens"])
+            resultado["itens"] = [
+                item for item in resultado["itens"]
+                if not (
+                    # Item fantasma: descrição vazia/muito curta E p_total None/0 E catserv vazio
+                    (not item.get("descricao") or len(item.get("descricao", "").strip()) < 5)
+                    and (not item.get("p_total") or item.get("p_total") == 0)
+                    and (not item.get("catserv") or not item.get("catserv").strip())
+                )
+            ]
+            itens_removidos = itens_antes - len(resultado["itens"])
+            if itens_removidos > 0:
+                _log.log("ITENS", f"{itens_removidos} item(ns) fantasma removido(s)", "info")
 
         # ── Fallback OCR: fornecedor/CNPJ em imagem incorporada ──
         ident = resultado["identificacao"]
@@ -310,9 +568,9 @@ def extrair_processo(pdf_path: str) -> dict:
     # ── Extração da Nota de Crédito ──
     paginas_nc = paginas_classificadas.get("nota_credito", [])
     if paginas_nc:
-        resultado["nota_credito"] = _extrair_nota_credito(paginas_nc)
+        resultado["nota_credito"] = _extrair_nota_credito(paginas_nc, pdf_path)
     else:
-        print("[NC] Nenhuma página classificada como nota_credito.")
+        _log.log("NC", "Nenhuma página classificada como nota_credito.", "warn")
 
     # ── Complementar NC com dados da requisição (campos que faltam) ──
     _complementar_nc_com_req(resultado["nota_credito"],
@@ -354,6 +612,16 @@ def extrair_processo(pdf_path: str) -> dict:
         resultado["identificacao"]["tipo"] = _inferir_tipo_processo(
             resultado["identificacao"], paginas_classificadas
         )
+
+    # ── Resolver UASG com fallback (requisição, pregão, contrato, NC, capa, mapa OM) ──
+    _resolver_uasg(resultado, paginas_classificadas)
+
+    # ── Metadados de classificação e log/resumo para interface ──
+    resultado["metadata"]["paginas_por_categoria"] = {
+        k: len(v) for k, v in paginas_classificadas.items()
+    }
+    resultado["log"] = _log.entries
+    resultado["metadata"]["resumo_extracao"] = _log.resumo(resultado)
 
     return resultado
 
@@ -397,13 +665,12 @@ def _extrair_paginas(pdf_path: str) -> list[dict]:
                     paginas_ocr_pendentes.append((len(paginas) - 1, i))
 
     except Exception as e:
-        print(f"[ERRO] Falha ao abrir PDF: {e}")
+        _log.log("ERRO", f"Falha ao abrir PDF: {e}", "erro")
         return paginas
 
     # ── OCR para páginas sem texto ──
     if paginas_ocr_pendentes and _OCR_DISPONIVEL:
-        print(f"[OCR] {len(paginas_ocr_pendentes)} página(s) sem texto — "
-              "iniciando OCR...")
+        _log.log("OCR", f"{len(paginas_ocr_pendentes)} página(s) sem texto — iniciando OCR...", "info")
         for idx_lista, page_idx in paginas_ocr_pendentes:
             texto_ocr = _ocr_pagina(pdf_path, page_idx)
             if texto_ocr and len(texto_ocr) > _MIN_TEXTO_UTIL:
@@ -476,11 +743,20 @@ def _classificar_paginas(paginas: list[dict]) -> dict[str, list[dict]]:
             classificada = True
             # NÃO fazer continue — checklist pode ser capa/protocolo geral
 
+        # ── EDITAL/TERMO DE REFERÊNCIA (testar ANTES de requisição para evitar falsos positivos) ──
+        if not classificada and _eh_edital_ou_tr(texto):
+            classificadas["edital"].append(pag)
+            classificada = True
+            _log.log("CLASSIFICAÇÃO", f"Pg {pag.get('numero', '?')}: edital/termo de referência detectado", "info")
+            continue  # edital/TR é exclusivo — não pode ser requisição
+
         # ── REQUISIÇÃO ──
         eh_req = not classificada and _eh_requisicao(texto)
         if eh_req:
             classificadas["requisicao"].append(pag)
             classificada = True
+            if _eh_continuacao_tabela_itens(texto):
+                _log.log("CLASSIFICAÇÃO", f"Pg {pag.get('numero', '?')}: continuação de tabela de itens detectada", "info")
 
         # ── NOTA DE CRÉDITO ──
         # Não classificar como NC se já é requisição (req menciona NC no texto)
@@ -517,6 +793,12 @@ def _classificar_paginas(paginas: list[dict]) -> dict[str, list[dict]]:
             classificadas["contrato"].append(pag)
             classificada = True
 
+        # ── FALLBACK: continuação de tabela de itens (sem cabeçalho de requisição) ──
+        if not classificada and _eh_continuacao_tabela_itens(texto):
+            classificadas["requisicao"].append(pag)
+            classificada = True
+            _log.log("CLASSIFICAÇÃO", f"Pg {pag.get('numero', '?')}: continuação de tabela de itens detectada", "info")
+
         if not classificada:
             classificadas["nao_classificada"].append(pag)
 
@@ -542,19 +824,66 @@ def _eh_termo_abertura(texto_upper: str) -> bool:
     )
 
 
+def _eh_edital_ou_tr(texto_upper: str) -> bool:
+    """
+    Verifica se a página pertence ao Edital ou Termo de Referência (TR).
+    Requer pelo menos 2 indicadores para evitar falsos positivos.
+    """
+    indicadores = [
+        "EDITAL" in texto_upper,
+        "TERMO DE REFERÊNCIA" in texto_upper or "TERMO DE REFERENCIA" in texto_upper,
+        bool(re.search(r"PREGÃO\s+ELETRÔNICO\s+N[ºO°]", texto_upper)) or bool(re.search(r"PREGAO\s+ELETRONICO\s+N[ºO°]", texto_upper)),
+        "ESTUDO TÉCNICO PRELIMINAR" in texto_upper or "ESTUDO TECNICO PRELIMINAR" in texto_upper,
+        "ATA DE REGISTRO DE PREÇOS" in texto_upper or "ATA DE REGISTRO DE PRECOS" in texto_upper,
+        "PREGOEIRO" in texto_upper,
+        "EQUIPE DE APOIO" in texto_upper,
+        "HABILITAÇÃO" in texto_upper,
+        "IMPUGNAÇÃO" in texto_upper or "IMPUGNACAO" in texto_upper,
+    ]
+    return sum(indicadores) >= 2
+
+
+def _eh_continuacao_tabela_itens(texto_upper: str) -> bool:
+    """
+    Verifica se a página parece ser uma continuação da tabela de itens da requisição
+    (sem cabeçalho REQ Nº, ORDENADOR etc.). Basta 1 indicador.
+    
+    EXCLUI páginas de edital/TR mesmo que tenham R$ e CatMat.
+    """
+    # EXCLUSÃO: se contém indicadores fortes de edital/TR, NÃO é continuação de tabela
+    if "EDITAL" in texto_upper or "TERMO DE REFERÊNCIA" in texto_upper or "TERMO DE REFERENCIA" in texto_upper:
+        return False
+    
+    tem_rs = "R$" in texto_upper
+    if not tem_rs:
+        return False
+    # CatMat: 5–6 dígitos começando com 1, 3 ou 4
+    # re: \b[134]\d{4,5}\b
+    catmat_e_rs = bool(re.search(r"\b[134]\d{4,5}\b", texto_upper))
+    # ND no formato XX.XX.XX.XX (ex: 33.90.30.34)
+    # re: \b\d{2}\.\d{2}\.\d{2}\.\d{2}\b
+    nd_e_rs = bool(re.search(r"\b\d{2}\.\d{2}\.\d{2}\.\d{2}\b", texto_upper))
+    # TOTAL como texto + R$
+    total_e_rs = "TOTAL" in texto_upper
+    return catmat_e_rs or nd_e_rs or total_e_rs
+
+
 def _eh_requisicao(texto_upper: str) -> bool:
-    """Verifica se a página faz parte da Requisição."""
+    """Verifica se a página faz parte da Requisição (cabeçalho ou continuação de tabela)."""
+    # Indicadores de cabeçalho de requisição (pelo menos 2)
     indicadores = [
         bool(re.search(r"REQ\s*(?:N[ºO°]\s*)?\d", texto_upper)),
         "ORDENADOR DE DESPESAS" in texto_upper,
         "TIPO DE EMPENHO" in texto_upper,
         "AO SR" in texto_upper and "ORDENADOR" in texto_upper,
-        # Tabela de itens (páginas de continuação da requisição)
         "MATERIAL" in texto_upper and "ADQUIRIDO" in texto_upper,
         ("P. UNT" in texto_upper or "P.UNT" in texto_upper) and "TOTAL" in texto_upper,
         "FISC ADM" in texto_upper and "REQUISI" in texto_upper,
     ]
-    return sum(indicadores) >= 2  # pelo menos 2 indicadores
+    if sum(indicadores) >= 2:
+        return True
+    # Páginas de continuação de tabela: 1 indicador alternativo basta
+    return _eh_continuacao_tabela_itens(texto_upper)
 
 
 def _eh_nota_credito(texto_upper: str) -> bool:
@@ -825,37 +1154,87 @@ def _extrair_requisicao(texto: str) -> dict:
         else:
             dados["setor"] = candidato_setor
 
-    # ── OM requisitante ──
-    # Formatos:
-    #   "Do Cmt do 9º B Mnt"          → OM = 9º B Mnt
-    #   "Do Sr Cmt do 18 B Trnp"      → OM = 18 B Trnp
-    #   "Do Enc Set Mat/Cmdo 9° Gpt Log" → OM = 9º Gpt Log, setor = Set Mat
-    om_match = re.search(
-        r"Do\s+(?:Sr\s+)?Cmt\s+d[oa]\s+(.+?)(?:\n|$)", texto, re.IGNORECASE
-    )
-    if om_match:
-        dados["om"] = om_match.group(1).strip()
-    else:
-        # Formato "Do Enc [Setor]/[Cmdo] OM"
-        enc_match = re.search(
-            r"Do\s+Enc\s+(.+?)(?:\n|$)", texto, re.IGNORECASE
+    # ── OM requisitante e Setor (padrões melhorados) ──
+    # Só extrair se ainda não foi preenchido
+    if not dados.get("om") or not dados.get("setor"):
+        # Padrão 1: "Do: [Setor/OM]" ou "Do: Chefe da [Setor] do [OM]"
+        # Ex: "Do: Chefe da Seção de Contratação do 9º B Mnt" → om="9º B Mnt", setor="Seção de Contratação"
+        # Ex: "Do: FISC ADM/9º B MNT" → om="9º B MNT", setor="FISC ADM"
+        # Ex: "Do: Pel Sup/9º B Mnt" → om="9º B Mnt", setor="Pel Sup"
+        do_match = re.search(
+            r"Do:\s*(.+?)(?:\n|Ao:)", texto, re.IGNORECASE | re.DOTALL
         )
-        if enc_match:
-            enc_bruto = enc_match.group(1).strip()
-            # Separar setor e OM pelo "/" que antecede "Cmdo"
-            partes = enc_bruto.split("/")
-            if len(partes) >= 2:
-                # Setor = parte antes do "/", OM = parte após "Cmdo"
-                setor_enc = partes[0].strip()
-                om_parte = "/".join(partes[1:]).strip()
-                # Remover "Cmdo" do início da OM
-                om_parte = re.sub(r"^Cmdo\s+", "", om_parte, flags=re.IGNORECASE)
-                dados["om"] = om_parte
-                # Guardar setor extraído do "Do Enc" se o setor atual parece OM
-                if not dados["setor"] or re.search(r"\d.*(Gpt|B\s|Cia|Esqd)", dados["setor"]):
-                    dados["setor"] = setor_enc
+        if do_match:
+            do_bruto = do_match.group(1).strip()
+            
+            # Padrão: "Chefe da [Setor] do [OM]"
+            chefe_match = re.search(
+                r"Chefe\s+da\s+(.+?)\s+do\s+(.+?)(?:\s|$|,)", do_bruto, re.IGNORECASE
+            )
+            if chefe_match:
+                setor_chefe = chefe_match.group(1).strip()
+                om_chefe = chefe_match.group(2).strip()
+                if not dados.get("setor"):
+                    dados["setor"] = setor_chefe
+                if not dados.get("om"):
+                    dados["om"] = om_chefe
+            # Padrão: "[Setor]/[OM]" (com "/")
+            elif "/" in do_bruto:
+                partes = do_bruto.split("/", 1)
+                setor_do = partes[0].strip()
+                om_do = partes[1].strip()
+                # Limpar "Cmdo" do início da OM se houver
+                om_do = re.sub(r"^Cmdo\s+", "", om_do, flags=re.IGNORECASE).strip()
+                if not dados.get("setor"):
+                    dados["setor"] = setor_do
+                if not dados.get("om"):
+                    dados["om"] = om_do
+            # Se não tem "/" e não é padrão "Chefe da", pode ser só OM
             else:
-                dados["om"] = enc_bruto
+                # Verificar se parece ser OM (número + unidade militar)
+                if re.search(r"\d.*(Gpt|B\s|B\s+Mnt|B\s+Trnp|B\s+Sup|Cia|Esqd|Trnp|Mnt|Sup)", do_bruto, re.IGNORECASE):
+                    if not dados.get("om"):
+                        dados["om"] = do_bruto
+        
+        # Padrão 2: "Ao: Sr OD do Cmdo 9º Gpt Log" → extrair OM do Cmdo
+        ao_match = re.search(
+            r"Ao:\s*Sr\s+OD\s+do\s+Cmdo\s+(.+?)(?:\n|$)", texto, re.IGNORECASE
+        )
+        if ao_match and not dados.get("om"):
+            dados["om"] = ao_match.group(1).strip()
+    
+    # ── Fallback: padrões antigos (mantidos para compatibilidade) ──
+    if not dados.get("om"):
+        # Formatos:
+        #   "Do Cmt do 9º B Mnt"          → OM = 9º B Mnt
+        #   "Do Sr Cmt do 18 B Trnp"      → OM = 18 B Trnp
+        #   "Do Enc Set Mat/Cmdo 9° Gpt Log" → OM = 9º Gpt Log, setor = Set Mat
+        om_match = re.search(
+            r"Do\s+(?:Sr\s+)?Cmt\s+d[oa]\s+(.+?)(?:\n|$)", texto, re.IGNORECASE
+        )
+        if om_match:
+            dados["om"] = om_match.group(1).strip()
+        else:
+            # Formato "Do Enc [Setor]/[Cmdo] OM"
+            enc_match = re.search(
+                r"Do\s+Enc\s+(.+?)(?:\n|$)", texto, re.IGNORECASE
+            )
+            if enc_match:
+                enc_bruto = enc_match.group(1).strip()
+                # Separar setor e OM pelo "/" que antecede "Cmdo"
+                partes = enc_bruto.split("/")
+                if len(partes) >= 2:
+                    # Setor = parte antes do "/", OM = parte após "Cmdo"
+                    setor_enc = partes[0].strip()
+                    om_parte = "/".join(partes[1:]).strip()
+                    # Remover "Cmdo" do início da OM
+                    om_parte = re.sub(r"^Cmdo\s+", "", om_parte, flags=re.IGNORECASE)
+                    dados["om"] = om_parte
+                    # Guardar setor extraído do "Do Enc" se o setor atual parece OM
+                    if not dados.get("setor") or re.search(r"\d.*(Gpt|B\s|Cia|Esqd)", dados.get("setor", "")):
+                        dados["setor"] = setor_enc
+                else:
+                    dados["om"] = enc_bruto
 
     # ── NUP da Requisição ──
     nup = re.search(r"NUP:\s*(\d{5}\.\d{6}/\d{4}-\d{2})", texto)
@@ -1098,14 +1477,14 @@ def _corrigir_numero_pregao(numero: str) -> str:
         nr_corrigido = f"9{nr[1:].zfill(4)}"
         # Na verdade, o padrão é 90xxx: inserir 0 após o 9
         nr_corrigido = f"90{nr[1:]}"
-        print(f"[PREGÃO] Número corrigido: {numero} -> {nr_corrigido}/{ano}")
+        _log.log("PREGÃO", f"Número corrigido: {numero} -> {nr_corrigido}/{ano}", "info")
         return f"{nr_corrigido}/{ano}"
 
     # 3 dígitos -> provavelmente falta o prefixo 90
     # Ex: 004 -> 90004, 014 -> 90014
     if len(nr) <= 3:
         nr_corrigido = f"90{nr.zfill(3)}"
-        print(f"[PREGÃO] Número corrigido: {numero} -> {nr_corrigido}/{ano}")
+        _log.log("PREGÃO", f"Número corrigido: {numero} -> {nr_corrigido}/{ano}", "info")
         return f"{nr_corrigido}/{ano}"
 
     return numero
@@ -1188,6 +1567,8 @@ def _extrair_itens_via_tabelas(paginas_req: list[dict],
     """
     Extrai itens usando extract_tables() do pdfplumber nas páginas
     da requisição. Mais preciso que regex para tabelas com layout complexo.
+    
+    NÃO processa páginas classificadas como edital/TR.
     """
     itens = []
 
@@ -1198,25 +1579,35 @@ def _extrair_itens_via_tabelas(paginas_req: list[dict],
                 if idx >= len(pdf.pages):
                     continue
 
+                # Validação de segurança: não processar páginas de edital/TR
+                texto_pagina = pag_info.get("texto", "").upper()
+                if _eh_edital_ou_tr(texto_pagina):
+                    _log.log("ITENS", f"Pg {pag_info.get('numero', '?')}: ignorada (edital/TR)", "info")
+                    continue
+
                 pagina = pdf.pages[idx]
                 tabelas = pagina.extract_tables()
 
                 for tabela in tabelas:
-                    itens_tabela = _processar_tabela_itens(tabela)
+                    itens_tabela = _processar_tabela_itens(
+                        tabela, numero_pagina=pag_info["numero"]
+                    )
                     itens.extend(itens_tabela)
     except Exception as e:
-        print(f"[AVISO] Erro ao extrair tabelas: {e}")
+        _log.log("ITENS", f"Erro ao extrair tabelas: {e}", "warn")
 
     return itens
 
 
-def _processar_tabela_itens(tabela: list[list]) -> list[dict]:
+def _processar_tabela_itens(tabela: list[list],
+                            numero_pagina: Optional[int] = None) -> list[dict]:
     """
     Processa uma tabela extraída pelo pdfplumber e identifica se é
     uma tabela de itens de requisição. Retorna itens encontrados.
 
     Trata linhas de continuação (onde ITEM é None mas outras colunas
-    têm dados complementares como CatMat ou UND).
+    têm dados complementares como CatMat ou UND). Se não houver linha
+    de cabeçalho, usa _detectar_tabela_sem_cabecalho como fallback.
     """
     if not tabela or len(tabela) < 2:
         return []
@@ -1225,41 +1616,67 @@ def _processar_tabela_itens(tabela: list[list]) -> list[dict]:
 
     # Identificar o cabeçalho da tabela
     idx_cabecalho = _encontrar_cabecalho_itens(tabela)
-    if idx_cabecalho is None:
+
+    if idx_cabecalho is not None:
+        cabecalho = tabela[idx_cabecalho]
+        mapa_colunas = _mapear_colunas(cabecalho)
+        if "item" not in mapa_colunas:
+            # Cabeçalho falso positivo — tentar fallback sem cabeçalho
+            pass
+        else:
+            # Processar linhas de dados (após cabeçalho)
+            for i in range(idx_cabecalho + 1, len(tabela)):
+                linha = tabela[i]
+                if not linha:
+                    continue
+
+                item_dict = _processar_linha_item(linha, mapa_colunas)
+                if item_dict:
+                    # Buscar dados complementares em linhas de continuação
+                    for j in range(i + 1, min(i + 3, len(tabela))):
+                        linha_cont = tabela[j]
+                        if not linha_cont:
+                            continue
+                        idx_item = mapa_colunas.get("item", 0)
+                        if idx_item < len(linha_cont) and linha_cont[idx_item]:
+                            val = str(linha_cont[idx_item]).strip()
+                            if val and not val.upper().startswith("TOTAL"):
+                                break
+                        _complementar_item(item_dict, linha_cont, mapa_colunas)
+                    itens.append(item_dict)
+            return itens
+
+    # ── Fallback: tabela sem cabeçalho (página de continuação) ──
+    detectado = _detectar_tabela_sem_cabecalho(tabela)
+    if detectado is None:
         return []
 
-    cabecalho = tabela[idx_cabecalho]
+    mapa_colunas, idx_primeira = detectado
+    n_colunas = len(mapa_colunas)
 
-    # Mapear colunas por nome
-    mapa_colunas = _mapear_colunas(cabecalho)
-    if "item" not in mapa_colunas:
-        return []
-
-    # Processar linhas de dados (após cabeçalho)
-    for i in range(idx_cabecalho + 1, len(tabela)):
+    for i in range(idx_primeira, len(tabela)):
         linha = tabela[i]
         if not linha:
             continue
 
+        # Ignorar linhas TOTAL ou Obs:/texto curto sem número na coluna item
+        idx_item = mapa_colunas.get("item", 0)
+        primeira_celula = ""
+        if idx_item < len(linha) and linha[idx_item] is not None:
+            primeira_celula = str(linha[idx_item]).strip().upper()
+        if primeira_celula.startswith("TOTAL"):
+            continue
+        if primeira_celula.startswith("OBS") or primeira_celula.startswith("OBS:"):
+            continue
+        if not re.match(r"^\d{1,5}", primeira_celula):
+            continue
+
         item_dict = _processar_linha_item(linha, mapa_colunas)
         if item_dict:
-            # Buscar dados complementares em linhas de continuação
-            for j in range(i + 1, min(i + 3, len(tabela))):
-                linha_cont = tabela[j]
-                if not linha_cont:
-                    continue
-                # Linha de continuação: ITEM é None ou vazio
-                idx_item = mapa_colunas.get("item", 0)
-                if idx_item < len(linha_cont) and linha_cont[idx_item]:
-                    val = str(linha_cont[idx_item]).strip()
-                    if val and not val.upper().startswith("TOTAL"):
-                        break  # próximo item, não continuação
-
-                # Preencher campos vazios com dados da continuação
-                _complementar_item(item_dict, linha_cont, mapa_colunas)
-
             itens.append(item_dict)
 
+    if numero_pagina is not None:
+        _log.log("ITENS", f"Tabela sem cabeçalho detectada na pg {numero_pagina}: {n_colunas} colunas inferidas, {len(itens)} itens extraídos", "info")
     return itens
 
 
@@ -1306,6 +1723,116 @@ def _encontrar_cabecalho_itens(tabela: list[list]) -> Optional[int]:
                 "QTD", "UND", "UNT", "TOTAL", "ND", "DESCRI"
             ]):
                 return i
+    return None
+
+
+def _detectar_tabela_sem_cabecalho(tabela: list[list]) -> Optional[tuple[dict[str, int], int]]:
+    """
+    Detecta tabela de itens sem linha de cabeçalho (páginas de continuação).
+    Percorre as primeiras linhas (até 5) buscando a primeira que pareça item de dados,
+    PULANDO linhas iniciais com col0 vazia ou inválida (ex.: linha de contexto/lixo).
+    Se encontrar, infere o mapeamento de colunas no mesmo formato de _mapear_colunas.
+    Retorna (mapa_colunas, indice_primeira_linha_dados) ou None.
+    Conservador: só retorna mapa se pelo menos 3 colunas forem identificadas
+    (item + R$ + mais uma).
+    """
+    if not tabela or len(tabela) < 2:
+        return None
+
+    for i in range(min(5, len(tabela))):
+        linha = tabela[i]
+        if not linha:
+            continue
+
+        # Primeira célula (col 0): pode ser vazia em linhas de contexto (ex.: L0 com CUMMINS)
+        col0_val = ""
+        if len(linha) > 0 and linha[0] is not None:
+            col0_val = str(linha[0]).replace("\n", " ").strip()
+
+        # R$ em qualquer célula (substring), mesmo com quebra de linha (ex.: 'R$\n200,00')
+        tem_rs = any(
+            "R$" in str(c) for c in linha
+            if c is not None
+        )
+        tem_texto_longo = any(
+            len(str(c).replace("\n", " ").strip()) > 15
+            for c in linha if c is not None
+        )
+
+        _log.log("ITENS", f"_detectar_tabela_sem_cabecalho: verificando linha {i}: col0='{col0_val}', tem_rs={tem_rs}, tem_texto_longo={tem_texto_longo}", "info")
+
+        # Pular linhas que não são item de dados: col0 vazio ou não é número 2–5 dígitos
+        # re: ^\d{2,5}$ (aceita 2 dígitos, ex.: '57')
+        if not col0_val or not re.match(r"^\d{2,5}$", col0_val):
+            continue
+
+        if not tem_rs:
+            continue
+        if not tem_texto_longo:
+            continue
+
+        # Linha parece item de dados — inferir mapeamento de colunas
+        mapa: dict[str, int] = {}
+        for j, cell in enumerate(linha):
+            if cell is None:
+                continue
+            v = str(cell).replace("\n", " ").strip()
+            if not v:
+                continue
+
+            if "R$" in v:
+                if "p_unit" not in mapa:
+                    mapa["p_unit"] = j
+                elif "p_total" not in mapa:
+                    mapa["p_total"] = j
+                continue
+
+            # CatMat: 5–6 dígitos começando com 1, 3 ou 4
+            # re: ^[134]\d{4,5}$
+            if re.match(r"^[134]\d{4,5}$", v):
+                if "catserv" not in mapa:
+                    mapa["catserv"] = j
+                continue
+
+            # ND/SI: XX.XX.XX.XX ou XX.XX
+            # re: ^\d{2}\.\d{2}(\.\d{2}\.\d{2})?$
+            if re.match(r"^\d{2}\.\d{2}\.\d{2}\.\d{2}$", v) or re.match(r"^\d{2}\.\d{2}$", v):
+                if "nd_si" not in mapa:
+                    mapa["nd_si"] = j
+                continue
+
+            # Unidade: und, kg, un, cx, etc.
+            if re.match(r"^(und|un|kg|cx|unid|pc|mt|m|l|par)$", v, re.IGNORECASE):
+                if "und" not in mapa:
+                    mapa["und"] = j
+                continue
+
+            # Número isolado: 1–999 → item (primeiro); 1–9999 → qtd (outro)
+            if re.match(r"^\d{1,4}$", v) and v.isdigit():
+                num = int(v)
+                if 1 <= num <= 999 and "item" not in mapa:
+                    mapa["item"] = j
+                elif 1 <= num <= 9999 and "qtd" not in mapa and mapa.get("item") != j:
+                    mapa["qtd"] = j
+                continue
+
+            # Texto longo → descrição
+            if len(v) > 15 and not v.replace(" ", "").replace(".", "").isdigit():
+                if "descricao" not in mapa:
+                    mapa["descricao"] = j
+                continue
+
+        # Exigir pelo menos 3 colunas: item + (p_unit ou p_total) + mais uma
+        if "item" not in mapa:
+            continue
+        if "p_unit" not in mapa and "p_total" not in mapa:
+            continue
+        n_extra = sum(1 for k in ("descricao", "catserv", "nd_si", "und", "qtd") if k in mapa)
+        if n_extra < 1:
+            continue
+
+        return (mapa, i)
+
     return None
 
 
@@ -1381,16 +1908,9 @@ def _processar_linha_item(linha: list, mapa: dict[str, int]) -> Optional[dict]:
                     descricao = texto.replace("\n", " ")
                     break
 
-    # ND/SI — pode vir como "39.17" ou "33.90.39/24" etc.
+    # ND/SI — normalizar qualquer formato (33.90.30.34, 30/34, 339030/34 etc.)
     nd_si_raw = _celula("nd_si")
-    nd_si = None
-    if nd_si_raw:
-        # Limpar quebras de linha e espaços
-        nd_si = nd_si_raw.replace(" ", "").replace("\n", "")
-        # Se veio como "33.90.39/24", normalizar para "39.24"
-        m_nd = re.search(r"(\d{2})\.(\d{2})", nd_si)
-        if m_nd:
-            nd_si = nd_si  # manter como está
+    nd_si = _normalizar_nd_si(nd_si_raw) if nd_si_raw else None
 
     # Valores monetários
     p_unit_raw = _celula("p_unit")
@@ -1565,8 +2085,7 @@ def _extrair_fornecedor_ocr(paginas_req: list[dict],
             break
 
     if dados["fornecedor"] or dados["cnpj"]:
-        print(f"[OCR] Fornecedor/CNPJ extraídos da imagem: "
-              f"fornecedor={dados['fornecedor']}, cnpj={dados['cnpj']}")
+        _log.log("OCR", f"Fornecedor/CNPJ extraídos da imagem: fornecedor={dados['fornecedor']}, cnpj={dados['cnpj']}", "ok")
 
     return dados
 
@@ -1736,7 +2255,7 @@ def _parsear_itens_ocr(texto_ocr: str) -> list[dict]:
                 numeros_vistos.add(item["item"])
         
         if itens_unicos:
-            print(f"[OCR] {len(itens_unicos)} item(ns) extraído(s) via OCR (números de item: {sorted(numeros_vistos)})")
+            _log.log("OCR", f"{len(itens_unicos)} item(ns) extraído(s) via OCR (números de item: {sorted(numeros_vistos)})", "ok")
             return itens_unicos
 
     # ── ESTRATÉGIA 3: Múltiplos CatMats sem números de item explícitos ──
@@ -1872,7 +2391,7 @@ def _parsear_itens_ocr(texto_ocr: str) -> list[dict]:
             
             # Se conseguiu extrair exatamente 2 itens válidos, retornar
             if len(itens) == 2:
-                print(f"[OCR] {len(itens)} item(ns) extraído(s) via OCR (múltiplos sinais detectados)")
+                _log.log("OCR", f"{len(itens)} item(ns) extraído(s) via OCR (múltiplos sinais detectados)", "ok")
                 return itens
 
     # ── FALLBACK: Processar como item único (lógica original) ──
@@ -1898,9 +2417,22 @@ def _extrair_item_ocr_individual(trecho_texto: str, trecho_completo: str,
         catmats_validos = [c for c in catmats if len(c) in [5, 6] and c[0] in ['1', '3', '4']]
         catmat = catmats_validos[0] if catmats_validos else None
 
-    # ── ND/SI (padrão XX/XX, excluindo CNPJ que tem /XXXX) ──
-    nd_match = re.search(r"\b(\d{2})/(\d{2})\b(?!\d)", trecho_completo)
-    nd_si = f"{nd_match.group(1)}/{nd_match.group(2)}" if nd_match else None
+    # ── ND/SI: buscar qualquer padrão (XX/YY, XX.YY, 33.90.XX.YY, 339030/34 etc.) e normalizar ──
+    nd_si_raw = None
+    for pattern in [
+        r"\b(33\.90\.\d{2}\.\d{2})\b",            # 33.90.30.34
+        r"\b(33\.90\.\d{2}/\d{2})\b",             # 33.90.30/34
+        r"\b(3390\d{2}/\d{2})\b",                 # 339030/34
+        r"\b(3390\d{4})\b",                       # 33903034 (8 dígitos; antes do 6)
+        r"\b(3390\d{2})(?!\d)",                  # 339039 (6 dígitos)
+        r"\b(\d{2}/\d{2})\b(?!\d)",              # 30/34 (evitar CNPJ)
+        r"\b(\d{2}\.\d{2})\b",                   # 30.34 ou 39.17
+    ]:
+        m = re.search(pattern, trecho_completo)
+        if m:
+            nd_si_raw = m.group(1)
+            break
+    nd_si = _normalizar_nd_si(nd_si_raw) if nd_si_raw else None
 
     # ── Valores monetários (R$ X.XXX,XX ou R$X,XX) ──
     valores = re.findall(r"R\$\s*([\d.]+,\d{2})", trecho_completo)
@@ -1953,9 +2485,7 @@ def _extrair_item_ocr_individual(trecho_texto: str, trecho_completo: str,
             nums = re.findall(r"\b(\d{1,4})\b", trecho)
             for n in nums:
                 n_int = int(n)
-                nd_nums = []
-                if nd_match:
-                    nd_nums = [nd_match.group(1), nd_match.group(2)]
+                nd_nums = nd_si.split(".") if nd_si else []
                 # Aceitar apenas números razoáveis (1-9999) e que não sejam ND/SI
                 if 1 <= n_int <= 9999 and n not in nd_nums:
                     # Verificar se não é parte de um número maior (ex: 30.222)
@@ -2207,7 +2737,7 @@ def _complementar_nc_com_ocr(notas_credito: list[dict],
         dados_espelho["ptres"] = ptres.group(1)
 
     if dados_espelho:
-        print(f"[OCR] Espelho NC: complementando com {list(dados_espelho.keys())}")
+        _log.log("OCR", f"Espelho NC: complementando com {list(dados_espelho.keys())}", "info")
         # Aplicar a todas as NCs que têm campos vazios
         for nc in notas_credito:
             for campo, valor in dados_espelho.items():
@@ -2219,7 +2749,82 @@ def _complementar_nc_com_ocr(notas_credito: list[dict],
 # EXTRAÇÃO DA NOTA DE CRÉDITO
 # ══════════════════════════════════════════════════════════════════════
 
-def _extrair_nota_credito(paginas_nc: list[dict]) -> list[dict]:
+def _reconstruir_texto_siafi(pagina: dict, tabelas: list) -> str:
+    """
+    Reconstrui texto de tela SIAFI monoespacada (DEMONSTRA-DIARIO/CONRAZAO).
+    Quando pdfplumber.extract_tables() retorna grid de caracteres (um por célula),
+    concatena as células de cada linha para obter texto legível.
+    Se extract_text() já retornou texto utilizável (>100 chars), usa esse texto.
+    """
+    texto_existente = (pagina.get("texto") or "").strip()
+    if len(texto_existente) > 100:
+        return texto_existente
+
+    if not tabelas:
+        return texto_existente
+
+    linhas = []
+    for tabela in tabelas:
+        if not tabela:
+            continue
+        for row in tabela:
+            linha_texto = "".join(str(c) if c else " " for c in row)
+            linha_texto = linha_texto.rstrip()
+            if linha_texto:
+                linhas.append(linha_texto)
+
+    if not linhas:
+        return texto_existente
+
+    texto_reconstruido = "\n".join(linhas)
+    if len(texto_reconstruido) > len(texto_existente):
+        _log.log("SIAFI", f"Texto reconstruído a partir de tabela: {len(linhas)} linhas", "info")
+    return texto_reconstruido or texto_existente
+
+
+def _mesclar_nc(nc_base: dict, nc_nova: dict) -> None:
+    """
+    Preenche campos vazios de nc_base com valores de nc_nova (in-place).
+    Usado para mesclar NCs com o mesmo número extraídas de múltiplas páginas.
+    """
+    for chave, valor in nc_nova.items():
+        if valor is None:
+            continue
+        if chave == "linhas_evento" and isinstance(valor, list):
+            existentes = nc_base.get(chave) or []
+            # Evitar duplicatas por chave (nd, ptres, fonte, ugr, pi, esf, valor)
+            chaves_vistas = {tuple((k, l.get(k)) for k in ("nd", "ptres", "fonte", "ugr", "pi", "esf", "valor") if k in l) for l in existentes}
+            for l in valor:
+                chave_lin = tuple((k, l.get(k)) for k in ("nd", "ptres", "fonte", "ugr", "pi", "esf", "valor") if k in l)
+                if chave_lin not in chaves_vistas:
+                    existentes.append(l)
+                    chaves_vistas.add(chave_lin)
+            nc_base[chave] = existentes
+            continue
+        if nc_base.get(chave) in (None, "", []):
+            nc_base[chave] = valor
+
+
+def _deduplicar_ncs_por_numero(ncs: list[dict]) -> list[dict]:
+    """
+    Mescla NCs com o mesmo número (ex.: 2026NC000343) em uma única entrada,
+    preenchendo campos vazios a partir das demais.
+    """
+    ncs_por_numero: dict[str, dict] = {}
+    for nc in ncs:
+        num = nc.get("numero")
+        if not num:
+            ncs_por_numero[id(nc)] = nc  # sem número: manter como está
+            continue
+        num_str = str(num).strip()
+        if num_str in ncs_por_numero:
+            _mesclar_nc(ncs_por_numero[num_str], nc)
+        else:
+            ncs_por_numero[num_str] = dict(nc)
+    return list(ncs_por_numero.values())
+
+
+def _extrair_nota_credito(paginas_nc: list[dict], pdf_path: Optional[str] = None) -> list[dict]:
     """
     Extrai dados das páginas de Nota de Crédito.
 
@@ -2228,12 +2833,30 @@ def _extrair_nota_credito(paginas_nc: list[dict]) -> list[dict]:
     - Padrão (Proc 2 — texto estruturado com UG EMITENTE, DATA EMISSÃO etc.)
     - Fallback: apenas número NC quando formato não reconhecido
 
-    Retorna lista de dicts com os dados de cada NC encontrada.
+    Se pdf_path for informado e alguma página tiver texto curto, tenta reconstruir
+    texto a partir de extract_tables() (telas SIAFI em grid de caracteres).
+    Retorna lista de dicts com os dados de cada NC encontrada (deduplicada por número).
     """
     if not paginas_nc:
         return []
 
-    texto = _juntar_texto_paginas(paginas_nc)
+    # Montar texto: usar texto da página ou reconstruir a partir de tabelas (SIAFI)
+    partes = []
+    for pag in paginas_nc:
+        t = (pag.get("texto") or "").strip()
+        if pdf_path and (not t or len(t) < 100):
+            try:
+                with pdfplumber.open(pdf_path) as pdf:
+                    idx = pag.get("numero", 1) - 1
+                    if 0 <= idx < len(pdf.pages):
+                        pagina_pdf = pdf.pages[idx]
+                        tabelas = pagina_pdf.extract_tables() or []
+                        t = _reconstruir_texto_siafi(pag, tabelas)
+            except Exception as e:
+                _log.log("SIAFI", f"Erro ao reconstruir texto da pg {pag.get('numero')}: {e}", "erro")
+        partes.append(t or "")
+
+    texto = "\n\n".join(p for p in partes if p)
     if not texto:
         return []
 
@@ -2250,22 +2873,24 @@ def _extrair_nota_credito(paginas_nc: list[dict]) -> list[dict]:
     if eh_dd:
         ncs = _extrair_nc_demonstra_diario(texto)
         if ncs:
-            print(f"[NC] DEMONSTRA-DIARIO: {len(ncs)} NC(s) extraída(s)")
-            return ncs
+            _log.log("NC", f"DEMONSTRA-DIARIO: {len(ncs)} NC(s) extraída(s)", "ok")
+            return _deduplicar_ncs_por_numero(ncs)
 
     # ── Formato padrão ──
     ncs = _extrair_nc_padrao(texto)
     if ncs:
-        print(f"[NC] Formato padrão: {len(ncs)} NC(s) extraída(s)")
-        return ncs
+        _log.log("NC", f"Formato padrão: {len(ncs)} NC(s) extraída(s)", "ok")
+        return _deduplicar_ncs_por_numero(ncs)
 
     # ── Fallback: extrair pelo menos o número ──
     numeros = list(dict.fromkeys(re.findall(r"(20\d{2}NC\d{6})", texto)))
     if numeros:
-        print(f"[NC] Extração parcial (apenas número): {numeros}")
-        return [{"numero": n, "formato": "nao_extraido"} for n in numeros]
+        _log.log("NC", f"Extração parcial (apenas número): {numeros}", "warn")
+        return _deduplicar_ncs_por_numero(
+            [{"numero": n, "formato": "nao_extraido"} for n in numeros]
+        )
 
-    print("[NC] Nenhuma NC encontrada nas páginas classificadas.")
+    _log.log("NC", "Nenhuma NC encontrada nas páginas classificadas.", "warn")
     return []
 
 
@@ -2438,19 +3063,25 @@ def _processar_linhas_evento_dd(texto: str) -> list[dict]:
     Linha 1 (evento): NNN EEEEEE ... VALOR
     Linha 2 (dados) : (espaços) ESF PTRES FONTE ND UGR PI
 
+    Regex flexíveis para aceitar variações de espaçamento entre versões SIAFI.
+    PTRES: 4–6 dígitos; PI: 6–15 caracteres alfanuméricos.
     Aplica deduplicação: linhas com todos os campos E valor idênticos
-    representam o MESMO saldo (operações contábeis sobre o mesmo recurso).
+    representam o MESMO saldo.
     """
     linhas_texto = texto.split("\n")
     linhas_evento = []
 
-    # Padrão linha de evento: 3 dígitos + 6 dígitos + espaços + valor no fim
+    # ── Linha de evento: 3 dígitos + 6 dígitos + espaços variáveis + valor no fim ──
+    # re: ^(\d{3})\s+\d{6}.*?([\d]{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*$
+    # Flexibilizado: \s+ entre campos e antes do valor
     padrao_evento = re.compile(
-        r"^(\d{3})\s+\d{6}.*?([\d]{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*$"
+        r"^(\d{3})\s+\d{6}\s*.+?([\d]{1,3}(?:[.,]\d{3})*[.,]\d{2})\s*$"
     )
-    # Padrão linha de dados: começa com espaços + ESF PTRES FONTE ND UGR PI
+    # ── Linha de dados: espaços + ESF (1 díg) + PTRES (4–6) + FONTE (9–10) + ND + UGR (6) + PI (6–15) ──
+    # \s+ aceita variação de espaçamento entre versões SIAFI
     padrao_dados = re.compile(
-        r"^\s+(\d)\s+(\d{4,6})\s+(\d{9,10})\s+(3[34]\d{4}|339\d{3})\s+(\d{6})\s+([A-Z0-9]{6,15})\s*$"
+        r"^\s+(\d)\s+(\d{4,6})\s+(\d{9,10})\s+(3[34]\d{4}|339\d{3})\s+(\d{6})\s+([A-Z0-9]{6,15})\s*$",
+        re.IGNORECASE
     )
 
     for i, linha in enumerate(linhas_texto):
@@ -2459,10 +3090,18 @@ def _processar_linhas_evento_dd(texto: str) -> list[dict]:
             continue
 
         valor = _parse_valor_br(m_evt.group(2))
+        if valor is None:
+            continue
 
         # Procurar linha de dados nas próximas 3 linhas
         for j in range(i + 1, min(i + 4, len(linhas_texto))):
-            m_dados = padrao_dados.match(linhas_texto[j])
+            ln = linhas_texto[j]
+            # Normalizar espaços múltiplos para facilitar match
+            ln_norm = re.sub(r"\s+", " ", ln).strip()
+            if not ln_norm:
+                continue
+            ln_norm = " " + ln_norm  # padrão espera espaço inicial
+            m_dados = padrao_dados.match(ln_norm)
             if m_dados:
                 linhas_evento.append({
                     "esf":   m_dados.group(1),
@@ -2470,7 +3109,7 @@ def _processar_linhas_evento_dd(texto: str) -> list[dict]:
                     "fonte": m_dados.group(3),
                     "nd":    m_dados.group(4),
                     "ugr":   m_dados.group(5),
-                    "pi":    m_dados.group(6),
+                    "pi":    m_dados.group(6).strip(),
                     "valor": valor,
                 })
                 break
@@ -2858,10 +3497,10 @@ def _extrair_contrato(paginas_contrato: list[dict]) -> Optional[dict]:
 
     # Se menos de 3 campos preenchidos, provavelmente é falso positivo
     if preenchidos < 3 or campos_chave_preenchidos < 1:
-        print(f"[CONTRATO] Apenas {preenchidos} campos extraídos — descartado (falso positivo)")
+        _log.log("CONTRATO", f"Apenas {preenchidos} campos extraídos — descartado (falso positivo)", "warn")
         return None
 
-    print(f"[CONTRATO] Extraídos {preenchidos} campos do documento de contrato")
+    _log.log("CONTRATO", f"Extraídos {preenchidos} campos do documento de contrato", "ok")
 
     return dados
 
@@ -3140,7 +3779,7 @@ def _extrair_despachos(paginas_despacho: list[dict]) -> list[dict]:
     for d in despachos:
         n_tipos[d["tipo"]] = n_tipos.get(d["tipo"], 0) + 1
     tipos_str = ", ".join(f"{v}x {k}" for k, v in n_tipos.items())
-    print(f"[DESPACHOS] {len(despachos)} despacho(s) extraído(s) ({tipos_str})")
+    _log.log("DESPACHOS", f"{len(despachos)} despacho(s) extraído(s) ({tipos_str})", "ok")
 
     return despachos
 
@@ -3163,27 +3802,27 @@ def _extrair_certidoes(paginas_classificadas: dict) -> dict:
     if paginas_sicaf:
         texto_sicaf = _juntar_texto_paginas(paginas_sicaf)
         certidoes["sicaf"] = _extrair_sicaf(texto_sicaf)
-        print(f"[CERTIDÕES] SICAF extraído — CNPJ: {certidoes['sicaf'].get('cnpj', '?')}")
+        _log.log("CERTIDÕES", f"SICAF extraído — CNPJ: {certidoes['sicaf'].get('cnpj', '?')}", "ok")
     else:
-        print("[CERTIDÕES] Nenhuma página de SICAF encontrada.")
+        _log.log("CERTIDÕES", "Nenhuma página de SICAF encontrada.", "info")
 
     # ── CADIN ──
     paginas_cadin = paginas_classificadas.get("cadin", [])
     if paginas_cadin:
         texto_cadin = _juntar_texto_paginas(paginas_cadin)
         certidoes["cadin"] = _extrair_cadin(texto_cadin)
-        print(f"[CERTIDÕES] CADIN extraído — Situação: {certidoes['cadin'].get('situacao', '?')}")
+        _log.log("CERTIDÕES", f"CADIN extraído — Situação: {certidoes['cadin'].get('situacao', '?')}", "ok")
     else:
-        print("[CERTIDÕES] Nenhuma página de CADIN encontrada.")
+        _log.log("CERTIDÕES", "Nenhuma página de CADIN encontrada.", "info")
 
     # ── Consulta Consolidada ──
     paginas_cc = paginas_classificadas.get("consulta_consolidada", [])
     if paginas_cc:
         texto_cc = _juntar_texto_paginas(paginas_cc)
         certidoes["consulta_consolidada"] = _extrair_consulta_consolidada(texto_cc)
-        print(f"[CERTIDÕES] Consulta Consolidada extraída — {len(certidoes['consulta_consolidada'].get('cadastros', []))} cadastros")
+        _log.log("CERTIDÕES", f"Consulta Consolidada extraída — {len(certidoes['consulta_consolidada'].get('cadastros', []))} cadastros", "ok")
     else:
-        print("[CERTIDÕES] Nenhuma página de Consulta Consolidada encontrada.")
+        _log.log("CERTIDÕES", "Nenhuma página de Consulta Consolidada encontrada.", "info")
 
     return certidoes
 
@@ -3506,11 +4145,11 @@ def _complementar_fornecedor_com_certidoes(identificacao: dict,
 
     if not identificacao.get("cnpj") and sicaf.get("cnpj"):
         identificacao["cnpj"] = sicaf["cnpj"]
-        print(f"[FALLBACK] CNPJ obtido do SICAF: {sicaf['cnpj']}")
+        _log.log("FALLBACK", f"CNPJ obtido do SICAF: {sicaf['cnpj']}", "ok")
 
     if not identificacao.get("fornecedor") and sicaf.get("razao_social"):
         identificacao["fornecedor"] = sicaf["razao_social"]
-        print(f"[FALLBACK] Fornecedor obtido do SICAF: {sicaf['razao_social']}")
+        _log.log("FALLBACK", f"Fornecedor obtido do SICAF: {sicaf['razao_social']}", "ok")
 
 
 def _mesclar_identificacao(identificacao: dict, dados_req: dict) -> None:
@@ -3593,9 +4232,171 @@ def _inferir_tipo_processo(identificacao: dict,
     return None
 
 
+def _resolver_uasg(resultado: dict,
+                   paginas_classificadas: Optional[dict] = None) -> Optional[str]:
+    """
+    Resolve UASG com fallback em múltiplas fontes quando a requisição não
+    menciona explicitamente "UASG". Ordem de prioridade:
+    (a) identificacao.uasg já extraída da requisição
+    (b) pregao_detalhes.uasg_gerenciadora
+    (c) contrato.uasg_contratante
+    (d) NC: ug_favorecida da primeira NC, mapeada via _UG_PARA_UASG
+    (e) Capa: regex UASG no texto da capa
+    (f) Mapa OM → UASG (identificacao.om)
+    Se encontrar por fallback (b–f), seta identificacao.uasg e
+    identificacao.uasg_fonte; imprime [UASG] Resolvida via {fonte}: {uasg}.
+    """
+    ident = resultado.get("identificacao") or {}
+    uasg = None
+    fonte = None
+
+    # (a) Já extraída da requisição
+    uasg_a = ident.get("uasg")
+    if uasg_a and re.match(r"^\d{6}$", str(uasg_a).strip()):
+        return str(uasg_a).strip()
+
+    # (b) Pregão detalhes: uasg_gerenciadora
+    pregao = ident.get("pregao_detalhes")
+    if isinstance(pregao, dict):
+        uasg_b = pregao.get("uasg_gerenciadora")
+        if uasg_b and re.match(r"^\d{6}$", str(uasg_b).strip()):
+            uasg, fonte = str(uasg_b).strip(), "pregao_detalhes"
+
+    if not uasg:
+        # (c) Contrato: uasg_contratante
+        contrato = resultado.get("contrato")
+        if isinstance(contrato, dict):
+            uasg_c = contrato.get("uasg_contratante")
+            if uasg_c and re.match(r"^\d{6}$", str(uasg_c).strip()):
+                uasg, fonte = str(uasg_c).strip(), "contrato"
+
+    if not uasg:
+        # (d) NC: ug_favorecida (se UG conhecida do mapa)
+        ncs = resultado.get("nota_credito") or []
+        if ncs and isinstance(ncs[0], dict):
+            ug_fav = (ncs[0].get("ug_favorecida") or "").strip()
+            if ug_fav:
+                ug_limpa = re.sub(r"\D", "", ug_fav)
+                if len(ug_limpa) == 6:
+                    uasg_d = _UG_PARA_UASG.get(ug_limpa)
+                    if uasg_d:
+                        uasg, fonte = uasg_d, "nc"
+
+    if not uasg and paginas_classificadas:
+        # (e) Capa: regex UASG no texto da capa
+        pags_capa = paginas_classificadas.get("capa", [])
+        texto_capa = _juntar_texto_paginas(pags_capa)
+        if texto_capa:
+            m = re.search(r"(?:UASG|gerenciad[ao]\s+pel[ao]\s+UASG)\s*:?\s*(\d{6})",
+                          texto_capa, re.IGNORECASE)
+            if m:
+                uasg, fonte = m.group(1), "capa"
+
+    if not uasg:
+        # (f) Mapa OM → UASG
+        om_raw = (ident.get("om") or ident.get("orgao_origem") or "").strip().upper()
+        if om_raw:
+            # Normalizar: remover acentos/º para lookup
+            om_norm = re.sub(r"\s+", " ", om_raw)
+            for chave, uasg_f in _OM_PARA_UASG.items():
+                if chave in om_norm or om_norm in chave:
+                    uasg, fonte = uasg_f, "mapa_om"
+                    break
+            if not uasg:
+                # Tentar match direto por chave
+                for chave, uasg_f in _OM_PARA_UASG.items():
+                    if chave.replace("º", "").replace("  ", " ") in om_norm.replace("º", ""):
+                        uasg, fonte = uasg_f, "mapa_om"
+                        break
+
+    if uasg and fonte:
+        resultado.setdefault("identificacao", {})["uasg"] = uasg
+        resultado["identificacao"]["uasg_fonte"] = fonte
+        _log.log("UASG", f"Resolvida via {fonte}: {uasg}", "ok")
+
+    return uasg
+
+
 # ══════════════════════════════════════════════════════════════════════
 # UTILITÁRIOS
 # ══════════════════════════════════════════════════════════════════════
+
+def _normalizar_nd_si(nd_si_raw: Optional[str]) -> Optional[str]:
+    """
+    Normaliza o campo ND/SI (Natureza da Despesa) para o formato esperado pelo
+    nd_lookup: "XX.YY" (elemento.subelemento) ou "XX" (só elemento).
+    Tolerante a espaços, quebras de linha e artefatos de OCR.
+    Retorna None se a string não parecer um ND válido.
+
+    Exemplos:
+        "33.90.30.34"  → "30.34"
+        "33.90.30/34"   → "30.34"
+        "339030/34"     → "30.34"
+        "339039"        → "39"
+        "30.34"         → "30.34"
+        "30/34"         → "30.34"
+        "39.17"         → "39.17"
+        "30"            → "30"
+        "339000"        → None (subelemento 00 = genérico)
+    """
+    if not nd_si_raw or not isinstance(nd_si_raw, str):
+        return None
+    # Limpar: espaços, quebras de linha, caracteres estranhos do OCR
+    s = re.sub(r"[\s\n\r\t]+", "", nd_si_raw.strip())
+    # Manter apenas dígitos, ponto e barra
+    s = re.sub(r"[^\d./]", "", s)
+    if not s or len(s) > 15:
+        return None
+
+    # ── Formato completo com pontos: 33.90.XX.YY ou 33.90.XX/YY ──
+    # re: 33\.90\.(\d{2})[./](\d{2})
+    m = re.match(r"^33\.90\.(\d{2})[./](\d{2})$", s)
+    if m:
+        xx, yy = m.group(1), m.group(2)
+        if yy == "00":
+            return None
+        return f"{xx}.{yy}"
+
+    # ── Formato completo sem pontos: 3390XXYY ou 3390XX/YY ──
+    # re: 3390(\d{2})(\d{2}) ou 3390(\d{2})/(\d{2})
+    m = re.match(r"^3390(\d{2})/(\d{2})$", s)
+    if m:
+        xx, yy = m.group(1), m.group(2)
+        if yy == "00":
+            return None
+        return f"{xx}.{yy}"
+    m = re.match(r"^3390(\d{2})(\d{2})$", s)
+    if m:
+        xx, yy = m.group(1), m.group(2)
+        if yy == "00":
+            return xx  # 339030 → "30" (só elemento)
+        return f"{xx}.{yy}"
+
+    # ── Formato 6 dígitos: 3390XX (só elemento, sem subelemento) ──
+    # re: 3390(\d{2}) com exatamente 6 caracteres
+    if re.match(r"^3390\d{2}$", s) and len(s) == 6:
+        xx = s[4:6]
+        if xx == "00":
+            return None
+        return xx
+
+    # ── Formato abreviado: XX.YY ou XX/YY (2 dígitos, separador, 2 dígitos) ──
+    # re: ^(\d{2})[./](\d{2})$
+    m = re.match(r"^(\d{2})[./](\d{2})$", s)
+    if m:
+        xx, yy = m.group(1), m.group(2)
+        if yy == "00":
+            return None
+        return f"{xx}.{yy}"
+
+    # ── Só elemento: XX (2 dígitos) ──
+    if re.match(r"^\d{2}$", s) and len(s) == 2:
+        if s == "00":
+            return None
+        return s
+
+    return None
+
 
 def _juntar_texto_paginas(paginas: list[dict]) -> str:
     """Concatena o texto de múltiplas páginas com separadores."""
@@ -3736,6 +4537,28 @@ def _imprimir_resultado(resultado: dict, nivel: int = 0) -> None:
 if __name__ == "__main__":
     import sys
     import os
+
+    # ── Testes inline: _normalizar_nd_si ──
+    _casos_nd_si = [
+        ("33.90.30.34", "30.34"),
+        ("33.90.30/34", "30.34"),
+        ("339030/34", "30.34"),
+        ("339039", "39"),
+        ("30.34", "30.34"),
+        ("30/34", "30.34"),
+        ("39.17", "39.17"),
+        ("30", "30"),
+        ("339000", None),
+        ("33.90.30.34\n", "30.34"),
+        (" 30 / 34 ", "30.34"),
+        ("abc", None),
+        ("", None),
+    ]
+    print("[TESTE] _normalizar_nd_si:")
+    for entrada, esperado in _casos_nd_si:
+        obtido = _normalizar_nd_si(entrada)
+        ok = "OK" if obtido == esperado else "FALHA"
+        print(f"  {ok!s:4} {repr(entrada):25} → {repr(obtido)} (esperado {repr(esperado)})")
 
     # Caminho padrão para testes
     diretorio_testes = os.path.join(
